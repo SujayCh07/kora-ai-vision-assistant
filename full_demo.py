@@ -31,10 +31,11 @@ from vision.schemas import Environment, FrameAnalysisRequest, FrameAnalysisRespo
 WINDOW_VISION = "Assistive Overlay"
 WINDOW_YOLO = "YOLO Detections"
 WINDOW_DEPTH = "MiDaS Depth"
-DEFAULT_PROMPT = (
-    "You are SnowFlake, a concise mobility assistant for blind travelers. Combine the vision context with the user "
-    "request and respond in under 80 words, prioritizing safety cues."
-)
+
+with open("mcp_prompt.txt", "r", encoding="utf-8") as file:
+    text = file.read()
+
+DEFAULT_PROMPT = (text)
 WAKE_PHRASES = ("hey kora", "hey cora", "hey kory", "hey core")
 GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "thank you kora")
 INACTIVITY_TIMEOUT = 25.0  # seconds of silence before ending the convo
