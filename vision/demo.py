@@ -14,10 +14,10 @@ import numpy as np
 if __package__ in (None, ""):
     sys.path.append(str(Path(__file__).resolve().parent))
     from pipeline import VisionPipeline
-    from schemas import FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata
+    from schemas import Environment, FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata
 else:  # pragma: no cover
     from .pipeline import VisionPipeline
-    from .schemas import FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata
+    from .schemas import Environment, FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata
 
     
 WINDOW_NAME = "AI-ATL Vision Demo"
@@ -66,7 +66,7 @@ def draw_yolo_view(frame, response: FrameAnalysisResponse):
     return view
 
 
-def draw_response(frame, response: FrameAnalysisResponse):
+def draw_response(frame, response: FrameAnalysisResponse, environment: Environment):
     annotated = frame.copy()
     h, w = frame.shape[:2]
 
@@ -108,6 +108,16 @@ def draw_response(frame, response: FrameAnalysisResponse):
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
         (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        annotated,
+        f"Mode: {environment.value}",
+        (20, 64),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (180, 255, 180),
         2,
         cv2.LINE_AA,
     )
@@ -156,9 +166,9 @@ def render_depth(depth_map: Optional[np.ndarray], shape: tuple[int, int]) -> np.
     return depth_color
 
 
-def log_packages(response: FrameAnalysisResponse) -> None:
+def log_packages(response: FrameAnalysisResponse, environment: Environment) -> None:
     print("\n" + "=" * 80)
-    print(f"Frame {response.frame_id}")
+    print(f"Frame {response.frame_id} (mode={environment.value})")
     print("Objects:")
     if not response.objects:
         print("  (none)")
@@ -173,7 +183,7 @@ def log_packages(response: FrameAnalysisResponse) -> None:
     print("Center distance:", center.distance_m, "confidence:", center.confidence, "advisory:", center.advisory)
 
 
-def main(camera_index: int = 0) -> None:
+def main(camera_index: int, environment: Environment) -> None:
     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open webcam index {camera_index}")
@@ -202,17 +212,18 @@ def main(camera_index: int = 0) -> None:
                 timestamp=datetime.utcnow(),
                 frame_metadata=metadata,
                 image_base64=image_base64,
+                environment=environment,
             )
 
             response = pipeline.process(request)
-            annotated = draw_response(frame, response)
+            annotated = draw_response(frame, response, environment)
             yolo_view = draw_yolo_view(frame, response)
             depth_map = pipeline.last_depth_map
             depth_view = render_depth(depth_map, frame.shape[:2])
 
             now = time.time()
             if now - last_log > 1.5:
-                log_packages(response)
+                log_packages(response, environment)
                 last_log = now
 
             cv2.imshow(WINDOW_NAME, annotated)
@@ -230,5 +241,11 @@ def main(camera_index: int = 0) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the AI-ATL Vision demo with webcam input.")
     parser.add_argument("--camera", type=int, default=0, help="Webcam index to use (default: 0).")
+    parser.add_argument(
+        "--environment",
+        choices=[Environment.INDOOR.value, Environment.OUTDOOR.value],
+        default=Environment.INDOOR.value,
+        help="Choose indoor or outdoor pipeline (default: indoor).",
+    )
     args = parser.parse_args()
-    main(args.camera)
+    main(args.camera, Environment(args.environment))
