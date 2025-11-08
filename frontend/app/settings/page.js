@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { motion, AnimatePresence } from 'framer-motion'
+import GlassPanel from '@/components/GlassPanel'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -71,29 +73,50 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-kora-mesh relative overflow-hidden">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5 }}
+      className="min-h-screen bg-kora-mesh relative overflow-hidden"
+    >
       {/* Background elements */}
       <div className="absolute inset-0 bg-kora-gradient-ar"></div>
 
+      {/* Ambient breathing circles */}
+      <motion.div
+        animate={{ scale: [1, 1.1, 1], opacity: [0.1, 0.15, 0.1] }}
+        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+        className="absolute top-20 right-10 w-96 h-96 bg-kora-accent/10 rounded-full blur-3xl"
+      />
+
       {/* Header */}
-      <div className="relative z-10 frosted border-b border-kora-border px-6 py-6 mb-6">
+      <motion.div
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
+        className="relative z-10 frosted border-b border-kora-border px-6 py-6 mb-6"
+      >
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <h1 className="text-3xl font-bold text-kora-text">Settings</h1>
-          <button
+          <motion.button
             onClick={handleBack}
-            className="w-12 h-12 rounded-xl bg-white/80 hover:bg-white flex items-center justify-center transition-all shadow-kora-md"
+            whileHover={{ scale: 1.1, x: -5 }}
+            whileTap={{ scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="w-12 h-12 rounded-xl bg-white/80 flex items-center justify-center shadow-kora-md"
             aria-label="Go back"
           >
             <svg className="w-6 h-6 text-kora-text" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
             </svg>
-          </button>
+          </motion.button>
         </div>
-      </div>
+      </motion.div>
 
       <div className="relative z-10 max-w-2xl mx-auto px-6 pb-20 space-y-4">
         {/* Voice Settings Card */}
-        <div className="floating-card p-6 space-y-6 animate-slide-up">
+        <GlassPanel variant="frosted" delay={0.1} className="p-6 space-y-6">
           <div className="flex items-center space-x-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-kora-primary to-kora-secondary flex items-center justify-center">
               <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -107,15 +130,19 @@ export default function SettingsPage() {
           </div>
 
           {/* Voice Toggle */}
-          <label className="flex items-center justify-between p-4 rounded-xl bg-kora-panel hover:bg-kora-border/30 cursor-pointer transition-all">
+          <motion.label
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="flex items-center justify-between p-4 rounded-xl bg-kora-panel cursor-pointer"
+          >
             <div className="flex-1">
               <div className="font-medium text-kora-text">Voice Guidance</div>
               <div className="text-sm text-kora-text-secondary">Enable voice instructions</div>
             </div>
-            <button
+            <motion.button
               onClick={() => updateSetting('voiceEnabled', !settings.voiceEnabled)}
               className={`
-                relative w-14 h-8 rounded-full transition-all duration-300
+                relative w-14 h-8 rounded-full
                 ${settings.voiceEnabled
                   ? 'bg-gradient-to-r from-kora-primary to-kora-secondary shadow-kora-glow'
                   : 'bg-gray-300'
@@ -125,12 +152,13 @@ export default function SettingsPage() {
               aria-checked={settings.voiceEnabled}
               aria-label="Toggle voice guidance"
             >
-              <div className={`
-                absolute top-1 w-6 h-6 rounded-full bg-white shadow-lg transition-all duration-300
-                ${settings.voiceEnabled ? 'right-1' : 'left-1'}
-              `}></div>
-            </button>
-          </label>
+              <motion.div
+                animate={{ x: settings.voiceEnabled ? 24 : 4 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                className="absolute top-1 w-6 h-6 rounded-full bg-white shadow-lg"
+              />
+            </motion.button>
+          </motion.label>
 
           {/* Volume Slider */}
           <div className="p-4 rounded-xl bg-kora-panel">
@@ -154,10 +182,10 @@ export default function SettingsPage() {
               />
             </label>
           </div>
-        </div>
+        </GlassPanel>
 
         {/* Detection Settings Card */}
-        <div className="floating-card p-6 space-y-6 animate-slide-up" style={{ animationDelay: '100ms' }}>
+        <GlassPanel variant="frosted" delay={0.2} className="p-6 space-y-6">
           <div className="flex items-center space-x-3 mb-4">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-kora-info to-kora-accent flex items-center justify-center">
               <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -193,47 +221,57 @@ export default function SettingsPage() {
             <label className="block">
               <div className="font-medium text-kora-text mb-3">Environment Mode</div>
               <div className="grid grid-cols-2 gap-3">
-                <button
+                <motion.button
                   onClick={() => updateSetting('environmentMode', 'indoor')}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
                   className={`
-                    px-4 py-3 rounded-xl font-medium transition-all
+                    px-4 py-3 rounded-xl font-medium
                     ${settings.environmentMode === 'indoor'
                       ? 'bg-gradient-to-r from-kora-primary to-kora-secondary text-white shadow-kora-glow'
-                      : 'bg-white text-kora-text border-2 border-kora-border hover:border-kora-primary'
+                      : 'bg-white text-kora-text border-2 border-kora-border'
                     }
                   `}
                   aria-label="Set indoor mode"
                 >
                   Indoor
-                </button>
-                <button
+                </motion.button>
+                <motion.button
                   onClick={() => updateSetting('environmentMode', 'outdoor')}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
                   className={`
-                    px-4 py-3 rounded-xl font-medium transition-all
+                    px-4 py-3 rounded-xl font-medium
                     ${settings.environmentMode === 'outdoor'
                       ? 'bg-gradient-to-r from-kora-primary to-kora-secondary text-white shadow-kora-glow'
-                      : 'bg-white text-kora-text border-2 border-kora-border hover:border-kora-primary'
+                      : 'bg-white text-kora-text border-2 border-kora-border'
                     }
                   `}
                   aria-label="Set outdoor mode"
                 >
                   Outdoor
-                </button>
+                </motion.button>
               </div>
             </label>
           </div>
-        </div>
+        </GlassPanel>
 
         {/* Reset Button */}
-        <button
+        <motion.button
           onClick={resetSettings}
-          className="w-full bg-white border-2 border-kora-danger text-kora-danger font-semibold text-lg px-6 py-4 rounded-2xl hover:bg-kora-danger hover:text-white transition-all shadow-kora-md hover:shadow-kora-lg animate-slide-up"
-          style={{ animationDelay: '200ms' }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.5 }}
+          whileHover={{ scale: 1.02, backgroundColor: '#ff3333' }}
+          whileTap={{ scale: 0.98 }}
+          className="w-full bg-white border-2 border-kora-danger text-kora-danger font-semibold text-lg px-6 py-4 rounded-2xl shadow-kora-md"
           aria-label="Reset all settings to defaults"
         >
           Reset to Defaults
-        </button>
+        </motion.button>
       </div>
-    </div>
+    </motion.div>
   )
 }
