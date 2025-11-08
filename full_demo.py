@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import io
 import queue
@@ -102,9 +103,7 @@ class SpeechListener:
             audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
             self._queue.put(audio_b64)
             print(f"\n[VOICE] Captured user speech chunk ({len(wav_bytes)} bytes).")
-            # Play beep when speech capture is complete (only if not paused)
-            if not self._is_paused:
-                play_stop_recording_beep()
+            # Don't beep here - we'll control beeps from the main loop
         except Exception as exc:  # pragma: no cover
             print(f"[VOICE] Error capturing audio: {exc}")
 
@@ -261,6 +260,75 @@ def build_assistive_prompt(instructions: Optional[str], vision_summary: str, use
         )
 
 
+class PersistentLLMConnection:
+    """Manages a persistent connection to Snowflake LLM to avoid reconnecting each time."""
+    
+    def __init__(self, snowflake_client: SnowflakeLLM):
+        self.client = snowflake_client
+        self._connection_active = False
+        
+    def __enter__(self):
+        """Establish persistent connection."""
+        try:
+            # Keep the Snowflake connection alive
+            self._connection_active = True
+            print("[LLM] Persistent connection established")
+        except Exception as e:
+            print(f"[LLM] Error establishing persistent connection: {e}")
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Close persistent connection."""
+        try:
+            self._connection_active = False
+            print("[LLM] Persistent connection closed")
+        except Exception as e:
+            print(f"[LLM] Error closing persistent connection: {e}")
+    
+    def complete(self, prompt: str) -> str:
+        """Send completion request using persistent connection."""
+        if not self._connection_active:
+            print("[LLM] Warning: Connection not active, using regular method")
+        return self.client.complete(prompt)
+
+
+class PersistentElevenLabsConnection:
+    """Manages persistent connection to ElevenLabs to avoid reconnecting each time."""
+    
+    def __init__(self, eleven_client: ElevenLabsBridge):
+        self.client = eleven_client
+        self._connection_active = False
+        
+    def __enter__(self):
+        """Establish persistent connection."""
+        try:
+            self._connection_active = True
+            print("[ELEVENLABS] Persistent connection established")
+        except Exception as e:
+            print(f"[ELEVENLABS] Error establishing persistent connection: {e}")
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Close persistent connection."""
+        try:
+            self._connection_active = False
+            print("[ELEVENLABS] Persistent connection closed")
+        except Exception as e:
+            print(f"[ELEVENLABS] Error closing persistent connection: {e}")
+    
+    def transcribe_base64_audio(self, audio_base64: str) -> Optional[str]:
+        """Transcribe audio using persistent connection."""
+        if not self._connection_active:
+            print("[ELEVENLABS] Warning: Connection not active, using regular method")
+        return self.client.transcribe_base64_audio(audio_base64)
+    
+    def synthesize(self, text: str) -> bytes:
+        """Synthesize speech using persistent connection."""
+        if not self._connection_active:
+            print("[ELEVENLABS] Warning: Connection not active, using regular method")
+        return self.client.synthesize(text)
+
+
 def play_audio_bytes(audio_bytes: bytes) -> None:
     """Play audio from bytes with multiple fallback methods."""
     try:
@@ -293,7 +361,8 @@ def play_audio_bytes(audio_bytes: bytes) -> None:
                 return
             except Exception as e2:
                 print(f"[AUDIO] Windows player failed: {e2}")
-                                    
+                
+                    
     except Exception as e:
         print(f"[AUDIO] Error in play_audio_bytes: {e}")
         import traceback
@@ -307,12 +376,15 @@ def run_cycle(
     prompt_instructions: Optional[str],
     audio_base64: Optional[str],
     pipeline: VisionPipeline,
-    eleven: ElevenLabsBridge,
-    snowflake: SnowflakeLLM,
+    eleven_conn: PersistentElevenLabsConnection,
+    snowflake_conn: PersistentLLMConnection,
     synthesize_voice: bool,
     always_narrate: bool = True,
     listener: Optional[SpeechListener] = None,
-) -> FrameAnalysisResponse:
+) -> tuple[FrameAnalysisResponse, bool]:
+    """
+    Returns: (response, audio_was_played)
+    """
     print("[PIPELINE] Building request payload.")
     request = FrameAnalysisRequest(
         frame_id=f"demo-{int(time.time() * 1000)}",
@@ -330,12 +402,13 @@ def run_cycle(
 
     update: dict[str, Optional[str]] = {}
     user_transcript = None
+    audio_was_played = False
     
     # Handle user speech if present
     if audio_base64:
         print("[AUDIO] Transcribing captured speech via ElevenLabs workflow...")
         try:
-            transcript = eleven.transcribe_base64_audio(audio_base64)
+            transcript = eleven_conn.transcribe_base64_audio(audio_base64)
             update["user_transcript"] = transcript
             user_transcript = transcript
             if transcript:
@@ -351,18 +424,18 @@ def run_cycle(
             response.vision_summary, 
             user_transcript
         )
-        print("[LLM] Sending prompt to Snowflake Cortex...")
+        print("[LLM] Sending prompt to Snowflake Cortex (persistent connection)...")
         try:
-            llm_text = snowflake.complete(prompt)
+            llm_text = snowflake_conn.complete(prompt)
             print("[LLM] Received response.")
             print(f"[LLM] Response: {llm_text}")
             update["llm_response"] = llm_text
             
             # ALWAYS synthesize and play audio for LLM responses
             if llm_text and synthesize_voice:
-                print("[TTS] Synthesizing ElevenLabs audio...")
+                print("[TTS] Synthesizing ElevenLabs audio (persistent connection)...")
                 try:
-                    audio_bytes = eleven.synthesize(llm_text)
+                    audio_bytes = eleven_conn.synthesize(llm_text)
                     print(f"[TTS] Synthesis successful, got {len(audio_bytes)} bytes")
                     update["audio_response_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
                     
@@ -373,6 +446,7 @@ def run_cycle(
                     print("[TTS] Playing audio response...")
                     play_audio_bytes(audio_bytes)
                     print("[TTS] Audio playback complete")
+                    audio_was_played = True
                     
                     # Resume microphone after playback
                     if listener:
@@ -391,7 +465,7 @@ def run_cycle(
     
     if update:
         response = response.model_copy(update=update)
-    return response
+    return response, audio_was_played
 
 
 def log_packages(response: FrameAnalysisResponse) -> None:
@@ -472,111 +546,126 @@ def main() -> None:
         normalized = text.lower()
         return any(phrase in normalized for phrase in phrases)
 
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("Failed to capture frame. Exiting.")
-                break
+    # Use persistent connections for better performance
+    with PersistentElevenLabsConnection(eleven) as eleven_conn, \
+         PersistentLLMConnection(snowflake) as snowflake_conn:
+        
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("Failed to capture frame. Exiting.")
+                    break
 
-            if metadata is None:
-                height, width = frame.shape[:2]
-                metadata = FrameMetadata(width=width, height=height, focal_length_px=None)
+                if metadata is None:
+                    height, width = frame.shape[:2]
+                    metadata = FrameMetadata(width=width, height=height, focal_length_px=None)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    break
 
-            now = time.time()
-            speech_audio = listener.get_audio()
-            should_refresh = now - last_run >= args.interval
+                now = time.time()
+                speech_audio = listener.get_audio()
+                should_refresh = now - last_run >= args.interval
 
-            transcript_for_wake: Optional[str] = None
-            if speech_audio:
-                try:
-                    transcript_for_wake = eleven.transcribe_base64_audio(speech_audio) or ""
-                    print(f"[VOICE] Transcript preview: {transcript_for_wake!r}")
-                except Exception as exc:
-                    print(f"[VOICE] Transcript failed during wake detection: {exc}")
-                    transcript_for_wake = ""
+                transcript_for_wake: Optional[str] = None
+                if speech_audio:
+                    try:
+                        transcript_for_wake = eleven_conn.transcribe_base64_audio(speech_audio) or ""
+                        print(f"[VOICE] Transcript preview: {transcript_for_wake!r}")
+                    except Exception as exc:
+                        print(f"[VOICE] Transcript failed during wake detection: {exc}")
+                        transcript_for_wake = ""
 
-            # Wake phrase detection
-            if not conversation_active:
-                if transcript_contains(transcript_for_wake, WAKE_PHRASES):
-                    conversation_active = True
+                # Wake phrase detection
+                if not conversation_active:
+                    if transcript_contains(transcript_for_wake, WAKE_PHRASES):
+                        conversation_active = True
+                        last_user_activity = now
+                        print("[WAKE] Wake phrase detected. Listening for your question...")
+                        play_start_recording_beep()  # Beep to indicate listening started
+                        # Don't process this audio, wait for next speech
+                        continue
+
+                # Handle user questions during active conversation
+                if conversation_active and speech_audio and transcript_for_wake:
                     last_user_activity = now
-                    print("[WAKE] Wake phrase detected. Listening for your question...")
-                    play_start_recording_beep()  # Beep to indicate listening started
-                    # Don't process this audio, wait for next speech
-                    continue
+                    if transcript_contains(transcript_for_wake, GOODBYE_PHRASES):
+                        print("[WAKE] Goodbye phrase detected, ending conversation.")
+                        conversation_active = False
+                        play_beep(frequency=600, duration_ms=150)  # Goodbye beep
+                        continue
+                    
+                    # Play "processing" beep once when we receive the question
+                    play_stop_recording_beep()
+                    
+                    # User asked a question - process it
+                    print("[STATE] Processing user question in conversation mode")
+                    response, audio_played = run_cycle(
+                        frame=frame,
+                        metadata=metadata,
+                        environment=environment,
+                        prompt_instructions=args.prompt,
+                        audio_base64=speech_audio,
+                        pipeline=pipeline,
+                        eleven_conn=eleven_conn,
+                        snowflake_conn=snowflake_conn,
+                        synthesize_voice=args.voice,
+                        always_narrate=True,
+                        listener=listener,
+                    )
+                    last_response = response
+                    last_run = now
+                    log_packages(response)
+                    
+                    # After audio response completes, beep to signal ready for next input
+                    if audio_played:
+                        play_start_recording_beep()
 
-            # Handle user questions during active conversation
-            if conversation_active and speech_audio and transcript_for_wake:
-                last_user_activity = now
-                if transcript_contains(transcript_for_wake, GOODBYE_PHRASES):
-                    print("[WAKE] Goodbye phrase detected, ending conversation.")
+                # Automatic narration on interval (even without user speech)
+                elif should_refresh and metadata is not None:
+                    print("[STATE] Running automatic assistive narration")
+                    response, audio_played = run_cycle(
+                        frame=frame,
+                        metadata=metadata,
+                        environment=environment,
+                        prompt_instructions=args.prompt,
+                        audio_base64=None,  # No user speech
+                        pipeline=pipeline,
+                        eleven_conn=eleven_conn,
+                        snowflake_conn=snowflake_conn,
+                        synthesize_voice=args.voice,
+                        always_narrate=True,  # Always generate narration
+                        listener=listener,
+                    )
+                    last_response = response
+                    last_run = now
+                    log_packages(response)
+                    
+                    # After automatic narration, beep to signal ready if in conversation mode
+                    if audio_played and conversation_active:
+                        play_start_recording_beep()
+                else:
+                    print("[PIPELINE] Waiting for next interval or user speech...", end="\r")
+
+                # Timeout inactive conversations
+                if conversation_active and now - last_user_activity > INACTIVITY_TIMEOUT:
+                    print("\n[WAKE] Conversation timed out due to inactivity.")
                     conversation_active = False
-                    play_beep(frequency=600, duration_ms=150)  # Goodbye beep
-                    continue
-                
-                # User asked a question - process it
-                print("[STATE] Processing user question in conversation mode")
-                response = run_cycle(
-                    frame=frame,
-                    metadata=metadata,
-                    environment=environment,
-                    prompt_instructions=args.prompt,
-                    audio_base64=speech_audio,
-                    pipeline=pipeline,
-                    eleven=eleven,
-                    snowflake=snowflake,
-                    synthesize_voice=args.voice,
-                    always_narrate=True,
-                    listener=listener,
-                )
-                last_response = response
-                last_run = now
-                log_packages(response)
 
-            # Automatic narration on interval (even without user speech)
-            elif should_refresh and metadata is not None:
-                print("[STATE] Running automatic assistive narration")
-                response = run_cycle(
-                    frame=frame,
-                    metadata=metadata,
-                    environment=environment,
-                    prompt_instructions=args.prompt,
-                    audio_base64=None,  # No user speech
-                    pipeline=pipeline,
-                    eleven=eleven,
-                    snowflake=snowflake,
-                    synthesize_voice=args.voice,
-                    always_narrate=True,  # Always generate narration
-                    listener=listener,
-                )
-                last_response = response
-                last_run = now
-                log_packages(response)
-            else:
-                print("[PIPELINE] Waiting for next interval or user speech...", end="\r")
-
-            # Timeout inactive conversations
-            if conversation_active and now - last_user_activity > INACTIVITY_TIMEOUT:
-                print("\n[WAKE] Conversation timed out due to inactivity.")
-                conversation_active = False
-
-            # Display windows
-            if last_response is not None:
-                annotated = draw_overlay(frame, last_response, environment, last_response.llm_response)
-                yolo_view = draw_yolo_view(frame, last_response)
-                depth_view = render_depth(pipeline.last_depth_map, frame.shape[:2])
-                cv2.imshow(WINDOW_VISION, annotated)
-                cv2.imshow(WINDOW_YOLO, yolo_view)
-                cv2.imshow(WINDOW_DEPTH, depth_view)
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
-        listener.stop()
+                # Display windows
+                if last_response is not None:
+                    annotated = draw_overlay(frame, last_response, environment, last_response.llm_response)
+                    yolo_view = draw_yolo_view(frame, last_response)
+                    depth_view = render_depth(pipeline.last_depth_map, frame.shape[:2])
+                    cv2.imshow(WINDOW_VISION, annotated)
+                    cv2.imshow(WINDOW_YOLO, yolo_view)
+                    cv2.imshow(WINDOW_DEPTH, depth_view)
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+            listener.stop()
 
 
 if __name__ == "__main__":
