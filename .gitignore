@@ -9,3 +9,25 @@ venv/
 # Ignore config file with sensitive data
 config.py
 rsa_key.p8
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+.env/
+venv/
+ENV/
+
+# IDE/editor settings
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# OS files
+*.swp
