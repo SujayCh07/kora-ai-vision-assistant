@@ -2,23 +2,21 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import Navigation from '@/components/Navigation'
 import CameraFeed from '@/components/CameraFeed'
-import Button from '@/components/Button'
 import { createSocket } from '@/lib/socket'
 import { createVoiceEngine } from '@/lib/voice'
 
 export default function LivePage() {
   const router = useRouter()
-  const [isActive, setIsActive] = useState(false)
+  const [isActive, setIsActive] = useState(true)
   const [detections, setDetections] = useState([])
-  const [caption, setCaption] = useState('')
-  const [connectionStatus, setConnectionStatus] = useState('disconnected')
-  const [stats, setStats] = useState({ fps: 0, objects: 0 })
+  const [caption, setCaption] = useState('Starting camera...')
+  const [connectionStatus, setConnectionStatus] = useState('connecting')
 
   const socketRef = useRef(null)
   const voiceRef = useRef(null)
   const lastSpeechRef = useRef(0)
+  const hasAnnouncedRef = useRef(false)
 
   // Initialize WebSocket and Voice
   useEffect(() => {
@@ -35,11 +33,16 @@ export default function LivePage() {
     // Socket event handlers
     socketRef.current.on('open', () => {
       setConnectionStatus('connected')
-      console.log('Connected to Kora backend')
+      setCaption('Camera active. Scanning surroundings.')
+      if (!hasAnnouncedRef.current) {
+        voiceRef.current?.speak('Camera active. Scanning surroundings.')
+        hasAnnouncedRef.current = true
+      }
     })
 
     socketRef.current.on('close', () => {
       setConnectionStatus('disconnected')
+      setCaption('Connection lost. Reconnecting...')
     })
 
     socketRef.current.on('error', (error) => {
@@ -50,6 +53,14 @@ export default function LivePage() {
     socketRef.current.on('detection', handleDetection)
 
     socketRef.current.connect()
+
+    // Announce instructions
+    setTimeout(() => {
+      if (!hasAnnouncedRef.current) {
+        voiceRef.current?.speak('Tap bottom left to exit. Tap bottom right for settings.')
+        hasAnnouncedRef.current = true
+      }
+    }, 2000)
 
     return () => {
       if (socketRef.current) {
@@ -73,19 +84,17 @@ export default function LivePage() {
         color: obj.color
       }))
       setDetections(formattedDetections)
-      setStats({ fps: data.fps || 0, objects: formattedDetections.length })
     }
 
     // Update caption and speak
-    if (data.message || data.direction) {
-      const message = data.message || `${data.direction} - ${data.level}`
-      setCaption(message)
+    if (data.message) {
+      setCaption(data.message)
 
-      // Debounce speech (don't speak more than once per 2 seconds)
+      // Debounce speech (don't speak more than once per 3 seconds)
       const now = Date.now()
-      if (now - lastSpeechRef.current > 2000) {
+      if (now - lastSpeechRef.current > 3000) {
         lastSpeechRef.current = now
-        voiceRef.current?.speak(message)
+        voiceRef.current?.speak(data.message)
       }
     }
   }
@@ -97,149 +106,72 @@ export default function LivePage() {
     }
   }
 
-  // Keyboard controls
-  useEffect(() => {
-    const handleKeyPress = (e) => {
-      if (e.code === 'Space') {
-        e.preventDefault()
-        setIsActive(prev => !prev)
-      } else if (e.code === 'KeyQ') {
-        e.preventDefault()
-        voiceRef.current?.setEnabled(!voiceRef.current.enabled)
-      } else if (e.code === 'KeyD') {
-        e.preventDefault()
-        socketRef.current?.send({ type: 'describe' })
-      } else if (e.code === 'Escape') {
-        router.push('/')
-      }
-    }
+  const handleExit = () => {
+    voiceRef.current?.speak('Exiting camera')
+    setTimeout(() => router.push('/'), 300)
+  }
 
-    window.addEventListener('keydown', handleKeyPress)
-    return () => window.removeEventListener('keydown', handleKeyPress)
-  }, [router])
-
-  // Auto-start on mount
-  useEffect(() => {
-    setIsActive(true)
-  }, [])
+  const handleSettings = () => {
+    voiceRef.current?.speak('Opening settings')
+    setTimeout(() => router.push('/settings'), 300)
+  }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navigation />
+    <div className="fixed inset-0 bg-kora-dark overflow-hidden">
+      {/* Full-screen camera */}
+      <CameraFeed
+        isActive={isActive}
+        detections={detections}
+        onFrame={handleFrame}
+        className="absolute inset-0 w-full h-full"
+      />
 
-      <main className="flex-1 p-4">
-        <div className="max-w-7xl mx-auto">
-          {/* Status bar */}
-          <div className="glass-panel p-4 mb-4 flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full ${
-                  connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
-                  connectionStatus === 'error' ? 'bg-red-500' :
-                  'bg-gray-500'
-                }`}></div>
-                <span className="text-sm capitalize">{connectionStatus}</span>
-              </div>
-              <div className="text-sm text-gray-400">
-                {stats.objects} objects • {stats.fps.toFixed(1)} FPS
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Button
-                variant={isActive ? 'danger' : 'primary'}
-                size="sm"
-                onClick={() => setIsActive(!isActive)}
-              >
-                {isActive ? 'Stop' : 'Start'}
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => router.push('/')}
-              >
-                Exit
-              </Button>
-            </div>
-          </div>
-
-          {/* Main content */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* Camera feed */}
-            <div className="lg:col-span-2">
-              <CameraFeed
-                isActive={isActive}
-                detections={detections}
-                onFrame={handleFrame}
-                className="aspect-video rounded-lg overflow-hidden"
-              />
-            </div>
-
-            {/* Side panel */}
-            <div className="space-y-4">
-              {/* Caption display */}
-              <div className="glass-panel p-6 rounded-lg min-h-[200px]">
-                <div className="text-sm text-gray-400 mb-2">Live Caption</div>
-                <div
-                  className="text-lg font-medium"
-                  role="status"
-                  aria-live="assertive"
-                  aria-atomic="true"
-                >
-                  {caption || 'Waiting for detections...'}
-                </div>
-                {voiceRef.current?.isCurrentlyPlaying() && (
-                  <div className="mt-4 flex items-center space-x-2 text-kora-cyan">
-                    <div className="flex space-x-1">
-                      <div className="w-1 h-4 bg-kora-cyan animate-pulse"></div>
-                      <div className="w-1 h-4 bg-kora-cyan animate-pulse animation-delay-100"></div>
-                      <div className="w-1 h-4 bg-kora-cyan animate-pulse animation-delay-200"></div>
-                    </div>
-                    <span className="text-sm">Speaking...</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Detection list */}
-              <div className="glass-panel p-6 rounded-lg max-h-[400px] overflow-y-auto">
-                <div className="text-sm text-gray-400 mb-4">Detected Objects</div>
-                {detections.length === 0 ? (
-                  <div className="text-gray-500 text-sm">No objects detected</div>
-                ) : (
-                  <div className="space-y-2">
-                    {detections.map((det, idx) => (
-                      <div
-                        key={idx}
-                        className="bg-kora-panel p-3 rounded border border-kora-border"
-                      >
-                        <div className="flex justify-between items-center">
-                          <span className="font-medium">{det.label}</span>
-                          <span className="text-sm text-gray-400">
-                            {(det.confidence * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                        {det.distance && (
-                          <div className="text-sm text-kora-cyan mt-1">
-                            {det.distance.toFixed(1)}m away
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Controls hint */}
-              <div className="glass-panel p-4 rounded-lg text-xs text-gray-400 space-y-1">
-                <div><kbd className="px-1 py-0.5 bg-kora-panel rounded">Space</kbd> Toggle session</div>
-                <div><kbd className="px-1 py-0.5 bg-kora-panel rounded">D</kbd> Describe scene</div>
-                <div><kbd className="px-1 py-0.5 bg-kora-panel rounded">Q</kbd> Quiet mode</div>
-                <div><kbd className="px-1 py-0.5 bg-kora-panel rounded">Esc</kbd> Exit</div>
-              </div>
-            </div>
-          </div>
+      {/* Caption bar at bottom */}
+      <div className="absolute bottom-0 left-0 right-0 bg-black/80 backdrop-blur-sm p-6 safe-area-inset-bottom">
+        <div
+          className="text-center text-2xl font-medium text-white"
+          role="status"
+          aria-live="assertive"
+          aria-atomic="true"
+        >
+          {caption}
         </div>
-      </main>
+      </div>
+
+      {/* Exit button - bottom left */}
+      <button
+        onClick={handleExit}
+        className="fixed bottom-24 left-6 w-20 h-20 rounded-full bg-kora-danger border-4 border-white text-white flex items-center justify-center shadow-2xl safe-area-inset-bottom"
+        aria-label="Exit camera and return home"
+      >
+        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+
+      {/* Settings button - bottom right */}
+      <button
+        onClick={handleSettings}
+        className="fixed bottom-24 right-6 w-20 h-20 rounded-full bg-kora-panel border-4 border-white text-white flex items-center justify-center shadow-2xl safe-area-inset-bottom"
+        aria-label="Open settings"
+      >
+        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </button>
+
+      {/* Connection status indicator - top left */}
+      <div className="fixed top-6 left-6 flex items-center space-x-3 bg-black/60 backdrop-blur-sm px-4 py-3 rounded-full">
+        <div className={`w-4 h-4 rounded-full ${
+          connectionStatus === 'connected' ? 'bg-kora-primary' :
+          connectionStatus === 'error' ? 'bg-kora-danger' :
+          'bg-kora-warning'
+        }`}></div>
+        <span className="text-white text-sm font-medium capitalize sr-only">
+          {connectionStatus}
+        </span>
+      </div>
     </div>
   )
 }

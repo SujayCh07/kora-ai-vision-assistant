@@ -2,150 +2,88 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Navigation from '@/components/Navigation'
-import Button from '@/components/Button'
 
 export default function HomePage() {
   const router = useRouter()
-  const [isListening, setIsListening] = useState(false)
-  const [wakeWordDetected, setWakeWordDetected] = useState(false)
+  const [isReady, setIsReady] = useState(false)
 
-  // Wake word detection (simulated)
+  // Auto-announce page on load
   useEffect(() => {
-    if (isListening) {
-      const timeout = setTimeout(() => {
-        setWakeWordDetected(true)
-        setTimeout(() => {
-          router.push('/live')
-        }, 1000)
-      }, 2000)
-
-      return () => clearTimeout(timeout)
+    const announcement = "Kora Vision Assistant. Tap the screen to start camera."
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(announcement)
+      utterance.rate = 0.9
+      utterance.volume = 1.0
+      setTimeout(() => {
+        window.speechSynthesis.speak(utterance)
+        setIsReady(true)
+      }, 500)
+    } else {
+      setIsReady(true)
     }
-  }, [isListening, router])
+  }, [])
 
-  const handleMicClick = () => {
-    setIsListening(!isListening)
+  const handleStart = () => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance("Starting camera")
+      window.speechSynthesis.speak(utterance)
+    }
+    setTimeout(() => {
+      router.push('/live')
+    }, 300)
   }
 
-  const handleStartSession = () => {
-    router.push('/live')
+  const handleSettings = (e) => {
+    e.stopPropagation()
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance("Opening settings")
+      window.speechSynthesis.speak(utterance)
+    }
+    router.push('/settings')
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navigation />
+    <div
+      className="min-h-screen bg-kora-dark flex flex-col items-center justify-center p-6 touch-manipulation"
+      onClick={handleStart}
+      role="button"
+      tabIndex={0}
+      aria-label="Start Kora Vision Assistant. Tap anywhere to begin."
+    >
+      <div className="text-center max-w-md w-full pointer-events-none">
+        <h1
+          className="text-7xl font-bold text-kora-primary mb-6"
+          aria-label="Kora"
+        >
+          KORA
+        </h1>
 
-      <main className="flex-1 flex items-center justify-center p-4">
-        <div className="max-w-2xl w-full text-center">
-          {/* Logo */}
-          <div className="mb-8 animate-float">
-            <div className="text-6xl font-bold bg-gradient-to-r from-kora-blue via-kora-cyan to-kora-accent bg-clip-text text-transparent mb-4">
-              KORA
-            </div>
-            <div className="text-xl text-gray-400">
-              AI Vision Assistant
-            </div>
-          </div>
+        <p className="text-3xl text-white mb-16 font-light" aria-live="polite">
+          Vision Assistant
+        </p>
 
-          {/* Animated Microphone */}
-          <div className="mb-12 flex justify-center">
-            <button
-              onClick={handleMicClick}
-              className={`
-                relative w-32 h-32 rounded-full
-                flex items-center justify-center
-                transition-all duration-300
-                ${isListening
-                  ? 'bg-kora-gradient shadow-kora-glow scale-110'
-                  : 'bg-kora-panel border-2 border-kora-border hover:border-kora-blue'
-                }
-              `}
-              aria-label={isListening ? 'Stop listening' : 'Start listening'}
-            >
-              {/* Pulsing rings when listening */}
-              {isListening && (
-                <>
-                  <div className="absolute inset-0 rounded-full bg-kora-blue opacity-20 animate-ping"></div>
-                  <div className="absolute inset-0 rounded-full bg-kora-cyan opacity-20 animate-ping animation-delay-150"></div>
-                </>
-              )}
-
-              {/* Microphone icon */}
-              <div className={`text-5xl z-10 ${isListening ? 'animate-pulse' : ''}`}>
-                🎤
-              </div>
-            </button>
-          </div>
-
-          {/* Status text */}
-          <div className="mb-8 h-12">
-            {isListening ? (
-              <div className="text-lg text-kora-cyan animate-pulse">
-                {wakeWordDetected ? '✓ Wake word detected!' : 'Listening for "Hey Kora"...'}
-              </div>
-            ) : (
-              <div className="text-gray-400">
-                Tap the microphone or say "Hey Kora"
-              </div>
-            )}
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-            <Button
-              variant="primary"
-              size="lg"
-              onClick={handleStartSession}
-              className="w-full sm:w-auto"
-            >
-              Start Vision Session
-            </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              onClick={() => router.push('/help')}
-              className="w-full sm:w-auto"
-            >
-              Learn More
-            </Button>
-          </div>
-
-          {/* Features */}
-          <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="glass-panel p-6 rounded-lg">
-              <div className="text-3xl mb-3">👁️</div>
-              <div className="font-semibold mb-2">Real-time Vision</div>
-              <div className="text-sm text-gray-400">
-                Object detection and depth sensing
-              </div>
-            </div>
-            <div className="glass-panel p-6 rounded-lg">
-              <div className="text-3xl mb-3">🔊</div>
-              <div className="font-semibold mb-2">Voice Guidance</div>
-              <div className="text-sm text-gray-400">
-                Natural voice instructions
-              </div>
-            </div>
-            <div className="glass-panel p-6 rounded-lg">
-              <div className="text-3xl mb-3">🎯</div>
-              <div className="font-semibold mb-2">Spatial Awareness</div>
-              <div className="text-sm text-gray-400">
-                3D mapping and navigation
-              </div>
-            </div>
-          </div>
-
-          {/* Keyboard shortcut hint */}
-          <div className="mt-12 text-sm text-gray-500">
-            <kbd className="px-2 py-1 bg-kora-panel rounded border border-kora-border">Space</kbd>
-            {' '}to start/stop session
-            {' • '}
-            <kbd className="px-2 py-1 bg-kora-panel rounded border border-kora-border">D</kbd>
-            {' '}to describe surroundings
+        <div className="mb-16">
+          <div className="w-40 h-40 mx-auto rounded-full border-8 border-kora-primary flex items-center justify-center">
+            <div className="w-24 h-24 rounded-full bg-kora-primary"></div>
           </div>
         </div>
-      </main>
+
+        <p className="text-2xl text-gray-300 font-medium">
+          Tap to Start
+        </p>
+      </div>
+
+      {/* Settings button in bottom corner */}
+      <button
+        onClick={handleSettings}
+        className="fixed bottom-8 right-8 w-16 h-16 rounded-full bg-kora-panel border-2 border-kora-border text-white flex items-center justify-center pointer-events-auto"
+        aria-label="Open settings"
+      >
+        <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </button>
     </div>
   )
 }

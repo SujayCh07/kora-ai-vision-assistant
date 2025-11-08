@@ -13,22 +13,14 @@
 }
 
 @layer utilities {
-  .glass-panel {
-    @apply backdrop-blur-md bg-kora-bg/80 border border-kora-border rounded-lg;
-  }
-
-  .glow-border {
-    @apply border-2 border-transparent bg-clip-padding;
-    background-image: linear-gradient(#121823, #121823),
-                      linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6);
-    background-origin: border-box;
-    background-clip: padding-box, border-box;
+  .panel {
+    @apply bg-kora-panel border border-kora-border;
   }
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 12px;
 }
 
 ::-webkit-scrollbar-track {
@@ -36,14 +28,20 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-kora-border rounded-full;
+  @apply bg-kora-primary;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-kora-blue;
+  @apply bg-kora-primary;
 }
 
 /* Focus visible styles for accessibility */
 *:focus-visible {
-  @apply outline-none ring-2 ring-kora-blue ring-offset-2 ring-offset-kora-dark;
+  @apply outline-none ring-4 ring-kora-primary ring-offset-4 ring-offset-kora-dark;
+}
+
+/* High contrast for touch targets */
+button, a {
+  min-height: 48px;
+  min-width: 48px;
 }

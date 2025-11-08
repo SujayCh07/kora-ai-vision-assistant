@@ -71,9 +71,9 @@ export default function CameraFeed({
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // Draw 3x3 grid
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)'
-    ctx.lineWidth = 1
+    // Draw 3x3 grid - subtle
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.2)'
+    ctx.lineWidth = 2
     const gridW = canvas.width / 3
     const gridH = canvas.height / 3
 
@@ -91,42 +91,46 @@ export default function CameraFeed({
 
     // Draw detections
     detections.forEach(detection => {
-      const { bbox, label, confidence, color } = detection
+      const { bbox, label, confidence, distance } = detection
 
       if (!bbox || bbox.length !== 4) return
 
       const [x, y, w, h] = bbox
 
-      // Determine color
-      const boxColor = color || (isInCenter(x, y, w, h, canvas.width, canvas.height)
-        ? 'rgba(255, 215, 0, 0.8)'  // Yellow for center objects
-        : 'rgba(0, 255, 0, 0.8)')    // Green for others
+      // Determine color based on position
+      const inCenter = isInCenter(x, y, w, h, canvas.width, canvas.height)
+      const boxColor = inCenter ? '#ffaa00' : '#00ff00' // Warning for center, green for others
+      const boxAlpha = inCenter ? '0.9' : '0.7'
 
-      // Draw bounding box
+      // Draw bounding box with thicker line
       ctx.strokeStyle = boxColor
-      ctx.lineWidth = 3
+      ctx.lineWidth = 4
       ctx.strokeRect(x, y, w, h)
 
-      // Draw label background
-      const labelText = `${label} ${(confidence * 100).toFixed(0)}%`
-      ctx.font = '16px sans-serif'
+      // Draw label with better visibility
+      const labelText = `${label}`
+      ctx.font = 'bold 20px sans-serif'
       const textMetrics = ctx.measureText(labelText)
-      const textHeight = 20
+      const textHeight = 28
 
+      // Label background
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
+      ctx.fillRect(x, y - textHeight - 4, textMetrics.width + 16, textHeight + 4)
+
+      // Label text
       ctx.fillStyle = boxColor
-      ctx.fillRect(x, y - textHeight - 4, textMetrics.width + 10, textHeight + 4)
-
-      // Draw label text
-      ctx.fillStyle = '#000'
-      ctx.fillText(labelText, x + 5, y - 8)
+      ctx.fillText(labelText, x + 8, y - 10)
 
       // Draw distance if available
-      if (detection.distance) {
-        const distText = `${detection.distance.toFixed(1)}m`
+      if (distance) {
+        const distText = `${distance.toFixed(1)}m`
+        ctx.font = 'bold 18px sans-serif'
+        const distMetrics = ctx.measureText(distText)
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
+        ctx.fillRect(x, y + h + 4, distMetrics.width + 16, 26)
         ctx.fillStyle = boxColor
-        ctx.fillRect(x, y + h + 4, 60, textHeight)
-        ctx.fillStyle = '#000'
-        ctx.fillText(distText, x + 5, y + h + 18)
+        ctx.fillText(distText, x + 8, y + h + 24)
       }
     })
 
@@ -179,10 +183,10 @@ export default function CameraFeed({
 
   if (error) {
     return (
-      <div className={`flex items-center justify-center bg-kora-panel rounded-lg ${className}`}>
+      <div className={`flex items-center justify-center bg-kora-dark ${className}`}>
         <div className="text-center p-8">
-          <div className="text-red-400 text-lg mb-2">Camera Error</div>
-          <div className="text-gray-400">{error}</div>
+          <div className="text-kora-danger text-2xl mb-4 font-bold">Camera Error</div>
+          <div className="text-white text-lg">{error}</div>
         </div>
       </div>
     )
@@ -195,17 +199,17 @@ export default function CameraFeed({
         autoPlay
         playsInline
         muted
-        className="w-full h-full object-cover rounded-lg"
+        className="w-full h-full object-cover"
       />
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
       />
       {!isReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-kora-panel">
+        <div className="absolute inset-0 flex items-center justify-center bg-kora-dark">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-kora-blue mx-auto mb-4"></div>
-            <div className="text-gray-400">Initializing camera...</div>
+            <div className="w-16 h-16 border-4 border-kora-primary border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
+            <div className="text-white text-xl">Starting camera...</div>
           </div>
         </div>
       )}
