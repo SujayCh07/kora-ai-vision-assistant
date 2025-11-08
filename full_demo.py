@@ -84,6 +84,7 @@ class SpeechListener:
         phrase_time_limit: float,
     ) -> None:
         self._queue: "queue.Queue[str]" = queue.Queue()
+        self._is_paused = False
         self._stopper = recognizer.listen_in_background(
             microphone,
             self._callback,
@@ -92,14 +93,30 @@ class SpeechListener:
 
     def _callback(self, recognizer: sr.Recognizer, audio: sr.AudioData) -> None:  # pylint: disable=unused-argument
         try:
+            # Don't capture audio if paused (e.g., during TTS playback)
+            if self._is_paused:
+                print("[VOICE] Skipping audio capture (paused during playback)")
+                return
+                
             wav_bytes = audio.get_wav_data()
             audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
             self._queue.put(audio_b64)
             print(f"\n[VOICE] Captured user speech chunk ({len(wav_bytes)} bytes).")
-            # Play beep when speech capture is complete
-            play_stop_recording_beep()
+            # Play beep when speech capture is complete (only if not paused)
+            if not self._is_paused:
+                play_stop_recording_beep()
         except Exception as exc:  # pragma: no cover
             print(f"[VOICE] Error capturing audio: {exc}")
+
+    def pause(self) -> None:
+        """Pause audio capture (e.g., during TTS playback)"""
+        self._is_paused = True
+        print("[VOICE] Microphone paused")
+
+    def resume(self) -> None:
+        """Resume audio capture"""
+        self._is_paused = False
+        print("[VOICE] Microphone resumed")
 
     def get_audio(self) -> Optional[str]:
         try:
@@ -294,6 +311,7 @@ def run_cycle(
     snowflake: SnowflakeLLM,
     synthesize_voice: bool,
     always_narrate: bool = True,
+    listener: Optional[SpeechListener] = None,
 ) -> FrameAnalysisResponse:
     print("[PIPELINE] Building request payload.")
     request = FrameAnalysisRequest(
@@ -347,11 +365,24 @@ def run_cycle(
                     audio_bytes = eleven.synthesize(llm_text)
                     print(f"[TTS] Synthesis successful, got {len(audio_bytes)} bytes")
                     update["audio_response_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
+                    
+                    # Pause microphone during playback
+                    if listener:
+                        listener.pause()
+                    
                     print("[TTS] Playing audio response...")
                     play_audio_bytes(audio_bytes)
                     print("[TTS] Audio playback complete")
+                    
+                    # Resume microphone after playback
+                    if listener:
+                        listener.resume()
+                        
                 except Exception as e:
                     print(f"[TTS] Error synthesizing/playing audio: {e}")
+                    # Make sure to resume even if there's an error
+                    if listener:
+                        listener.resume()
                     import traceback
                     traceback.print_exc()
         except Exception as e:
@@ -501,6 +532,7 @@ def main() -> None:
                     snowflake=snowflake,
                     synthesize_voice=args.voice,
                     always_narrate=True,
+                    listener=listener,
                 )
                 last_response = response
                 last_run = now
@@ -520,6 +552,7 @@ def main() -> None:
                     snowflake=snowflake,
                     synthesize_voice=args.voice,
                     always_narrate=True,  # Always generate narration
+                    listener=listener,
                 )
                 last_response = response
                 last_run = now
