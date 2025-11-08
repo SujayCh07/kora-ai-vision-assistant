@@ -75,7 +75,24 @@ def run_camera_loop(device_index: int = 0, fps_limit: float = 1.0) -> None:
     print(f"Camera opened: isOpened={cap.isOpened()}")
 
     pipeline = VisionPipeline()
-    processor = SnowflakeRiskProcessor(min_speak_interval_s=3.0)
+    # if SnowFlake HTTP server is running, post frames to it; otherwise fall back to local processor
+    import os
+    SERVER_URL = os.environ.get("SNOWFLAKE_SERVER_URL", "http://127.0.0.1:8001")
+    use_http = True
+    try:
+        import requests
+    except Exception:
+        requests = None
+        use_http = False
+
+    if use_http and requests is not None:
+        # a quick check
+        try:
+            requests.get(f"{SERVER_URL}/health", timeout=1.0)
+        except Exception:
+            use_http = False
+
+    processor = SnowflakeRiskProcessor(min_speak_interval_s=3.0) if not use_http else None
 
     print("Starting camera loop. Press Ctrl+C to stop.")
     last_time = 0.0
@@ -107,9 +124,59 @@ def run_camera_loop(device_index: int = 0, fps_limit: float = 1.0) -> None:
 
             try:
                 response = pipeline.process(payload)
-                msg = processor.process_frame(response)
-                if msg:
-                    print(f"Spoken alert: {msg}")
+                # Debug: print detection summary so user can see what's happening
+                obj_count = len(response.objects) if response.objects is not None else 0
+                print(f"Processed frame {payload.frame_id}: detected {obj_count} objects")
+                if obj_count:
+                    top = response.objects[0]
+                    print(
+                        f" Top object: label={top.label}, conf={top.confidence:.2f}, quadrant={top.quadrant}, depth_rel={top.relative_depth_m}"
+                    )
+                # Send to SnowFlake server if available, otherwise use local processor
+                if use_http and requests is not None:
+                    try:
+                        j = response.model_dump()
+                        r = requests.post(f"{SERVER_URL}/process_frame", json=j, timeout=2.0)
+                        if r.ok:
+                            print(f"Posted frame {payload.frame_id} to SnowFlake server")
+                        else:
+                            print("SnowFlake server returned error:", r.text)
+                    except Exception as e:
+                        print("Error posting to SnowFlake server:", e)
+                        # fallback to local
+                        msg = processor.process_frame(response) if processor is not None else None
+                        if msg:
+                            print(f"Spoken alert: {msg}")
+                else:
+                    msg = processor.process_frame(response)
+                    if msg:
+                        print(f"Spoken alert: {msg}")
+                # Draw simple overlays and show the frame so you can visually confirm detections
+                try:
+                    for obj in response.objects:
+                        bb = obj.bounding_box
+                        h, w = frame.shape[:2]
+                        x1 = int(bb.x_min * w)
+                        y1 = int(bb.y_min * h)
+                        x2 = int(bb.x_max * w)
+                        y2 = int(bb.y_max * h)
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(
+                            frame,
+                            f"{obj.label} {obj.confidence:.2f}",
+                            (x1, max(10, y1 - 6)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (0, 255, 0),
+                            1,
+                        )
+                    cv2.imshow("Vision - press q to quit", frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        print("Exiting by user keypress.")
+                        break
+                except Exception:
+                    # If GUI not available, ignore display errors
+                    pass
             except Exception as exc:
                 print(f"Error processing frame: {exc}")
 
