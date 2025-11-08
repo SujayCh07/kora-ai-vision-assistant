@@ -276,20 +276,7 @@ def play_audio_bytes(audio_bytes: bytes) -> None:
                 return
             except Exception as e2:
                 print(f"[AUDIO] Windows player failed: {e2}")
-                
-                # Method 3: Try simpleaudio if available
-                try:
-                    import simpleaudio as sa
-                    wav_data = audio_segment.export(format="wav")
-                    wave_obj = sa.WaveObject.from_wave_file(wav_data)
-                    play_obj = wave_obj.play()
-                    play_obj.wait_done()
-                    print("[AUDIO] Audio playback completed via simpleaudio")
-                    return
-                except Exception as e3:
-                    print(f"[AUDIO] simpleaudio failed: {e3}")
-                    print("[AUDIO] All playback methods failed!")
-                    
+                                    
     except Exception as e:
         print(f"[AUDIO] Error in play_audio_bytes: {e}")
         import traceback
