@@ -71,9 +71,10 @@ export default function CameraFeed({
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    // Draw 3x3 grid - subtle
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.2)'
-    ctx.lineWidth = 2
+    // Draw AR-style grid - subtle and modern
+    ctx.strokeStyle = 'rgba(0, 217, 163, 0.15)'
+    ctx.lineWidth = 1
+    ctx.setLineDash([5, 5])
     const gridW = canvas.width / 3
     const gridH = canvas.height / 3
 
@@ -88,8 +89,9 @@ export default function CameraFeed({
       ctx.lineTo(canvas.width, gridH * i)
       ctx.stroke()
     }
+    ctx.setLineDash([])
 
-    // Draw detections
+    // Draw detections with modern AR style
     detections.forEach(detection => {
       const { bbox, label, confidence, distance } = detection
 
@@ -97,40 +99,88 @@ export default function CameraFeed({
 
       const [x, y, w, h] = bbox
 
-      // Determine color based on position
+      // Determine color and style based on position
       const inCenter = isInCenter(x, y, w, h, canvas.width, canvas.height)
-      const boxColor = inCenter ? '#ffaa00' : '#00ff00' // Warning for center, green for others
-      const boxAlpha = inCenter ? '0.9' : '0.7'
+      const boxColor = inCenter ? '#00d9a3' : '#00b8ff' // Teal for center, blue for others
+      const glowColor = inCenter ? 'rgba(0, 217, 163, 0.3)' : 'rgba(0, 184, 255, 0.2)'
 
-      // Draw bounding box with thicker line
+      // Draw glow effect
+      ctx.shadowColor = glowColor
+      ctx.shadowBlur = 10
+
+      // Draw corner brackets (AR style)
       ctx.strokeStyle = boxColor
-      ctx.lineWidth = 4
-      ctx.strokeRect(x, y, w, h)
+      ctx.lineWidth = 3
+      const cornerLength = Math.min(w, h) * 0.2
 
-      // Draw label with better visibility
+      // Top-left corner
+      ctx.beginPath()
+      ctx.moveTo(x, y + cornerLength)
+      ctx.lineTo(x, y)
+      ctx.lineTo(x + cornerLength, y)
+      ctx.stroke()
+
+      // Top-right corner
+      ctx.beginPath()
+      ctx.moveTo(x + w - cornerLength, y)
+      ctx.lineTo(x + w, y)
+      ctx.lineTo(x + w, y + cornerLength)
+      ctx.stroke()
+
+      // Bottom-left corner
+      ctx.beginPath()
+      ctx.moveTo(x, y + h - cornerLength)
+      ctx.lineTo(x, y + h)
+      ctx.lineTo(x + cornerLength, y + h)
+      ctx.stroke()
+
+      // Bottom-right corner
+      ctx.beginPath()
+      ctx.moveTo(x + w - cornerLength, y + h)
+      ctx.lineTo(x + w, y + h)
+      ctx.lineTo(x + w, y + h - cornerLength)
+      ctx.stroke()
+
+      // Reset shadow
+      ctx.shadowBlur = 0
+
+      // Draw label with modern styling
       const labelText = `${label}`
-      ctx.font = 'bold 20px sans-serif'
+      ctx.font = '600 16px -apple-system, sans-serif'
       const textMetrics = ctx.measureText(labelText)
-      const textHeight = 28
+      const padding = 8
+      const textHeight = 20
 
-      // Label background
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
-      ctx.fillRect(x, y - textHeight - 4, textMetrics.width + 16, textHeight + 4)
+      // Label background with blur effect
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
+      ctx.fillRect(x, y - textHeight - padding, textMetrics.width + padding * 2, textHeight + padding)
 
       // Label text
       ctx.fillStyle = boxColor
-      ctx.fillText(labelText, x + 8, y - 10)
+      ctx.fillText(labelText, x + padding, y - padding - 2)
 
-      // Draw distance if available
+      // Draw distance badge if available
       if (distance) {
         const distText = `${distance.toFixed(1)}m`
-        ctx.font = 'bold 18px sans-serif'
+        ctx.font = '600 14px -apple-system, sans-serif'
         const distMetrics = ctx.measureText(distText)
 
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
-        ctx.fillRect(x, y + h + 4, distMetrics.width + 16, 26)
+        // Distance badge
+        const badgeY = y + h + 6
+        const badgeHeight = 24
+        const badgePadding = 10
+
+        // Gradient background
+        const gradient = ctx.createLinearGradient(x, badgeY, x, badgeY + badgeHeight)
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 0.95)')
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0.85)')
+
+        ctx.fillStyle = gradient
+        ctx.fillRect(x, badgeY, distMetrics.width + badgePadding * 2, badgeHeight)
+
+        // Distance text
         ctx.fillStyle = boxColor
-        ctx.fillText(distText, x + 8, y + h + 24)
+        ctx.fillText(distText, x + badgePadding, badgeY + 17)
       }
     })
 
@@ -183,10 +233,10 @@ export default function CameraFeed({
 
   if (error) {
     return (
-      <div className={`flex items-center justify-center bg-kora-dark ${className}`}>
-        <div className="text-center p-8">
+      <div className={`flex items-center justify-center bg-black ${className}`}>
+        <div className="text-center p-8 glass-panel rounded-2xl">
           <div className="text-kora-danger text-2xl mb-4 font-bold">Camera Error</div>
-          <div className="text-white text-lg">{error}</div>
+          <div className="text-kora-text text-lg">{error}</div>
         </div>
       </div>
     )
@@ -206,10 +256,13 @@ export default function CameraFeed({
         className="absolute inset-0 w-full h-full"
       />
       {!isReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-kora-dark">
-          <div className="text-center">
-            <div className="w-16 h-16 border-4 border-kora-primary border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-            <div className="text-white text-xl">Starting camera...</div>
+        <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div className="text-center glass-panel px-8 py-10 rounded-2xl">
+            <div className="relative w-20 h-20 mx-auto mb-6">
+              <div className="absolute inset-0 border-4 border-kora-primary/20 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-kora-primary border-t-transparent rounded-full animate-spin"></div>
+            </div>
+            <div className="text-kora-text text-xl font-medium">Initializing vision systems...</div>
           </div>
         </div>
       )}
