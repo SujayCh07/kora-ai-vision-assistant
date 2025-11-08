@@ -1,5 +1,5 @@
 import snowflake.connector
-from SnowflakeConfig import ACCOUNT, USER, PASSWORD
+from .SnowflakeConfig import ACCOUNT, USER, PASSWORD
 from typing import Optional
 
 

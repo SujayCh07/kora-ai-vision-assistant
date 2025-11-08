@@ -1,63 +1,109 @@
-from elevenlabs.client import ElevenLabs
-import os
-import speech_recognition as sr
-from pydub import AudioSegment
-from pydub.playback import play
-from pydub.generators import Sine
+from __future__ import annotations
+
+import base64
+import io
+import sys
 import time
-from config import ELEVENLABS_API_KEY
-from SnowFlakeLLMClient import SnowflakeLLMClient
+from pathlib import Path
+from typing import Iterable, List, Optional
 
-from dotenv import load_dotenv
+import speech_recognition as sr
 from elevenlabs import VoiceSettings
+from elevenlabs.client import ElevenLabs
+from pydub import AudioSegment
+from pydub.generators import Sine
+from pydub.playback import play
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-if not ELEVENLABS_API_KEY:
-    raise ValueError("ELEVENLABS_API_KEY environment variable not set")
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-client = ElevenLabs(
-    api_key=ELEVENLABS_API_KEY,
-)
+from config import get_settings  # noqa: E402  (import after adjusting sys.path)
+from .SnowFlakeLLMClient import SnowflakeLLMClient  # noqa: E402
 
-
-def play_listening_beep():
-    """
-    Plays a short beep sound to indicate the system is listening.
-    """
-    try:
-        beep = Sine(440).to_audio_segment(duration=200)
-        play(beep)
-    except Exception as e:
-        print(f"Could not play beep: {e}")
+MCP_PROMPT_PATH = PROJECT_ROOT / "mcp_prompt.txt"
+DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+WAKE_PHRASES = ("hey kora", "hey cora", "hey korra", "hey kory", "hey core", "hey cor")
+GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "bye korra", "thank you kora", "bye cor")
 
 
-def play_processing_beep():
-    """
-    Plays a double beep sound to indicate processing has started.
-    """
-    try:
-        beep1 = Sine(440).to_audio_segment(duration=100)
-        silence = AudioSegment.silent(duration=100)
-        beep2 = Sine(520).to_audio_segment(duration=100)
-        double_beep = beep1 + silence + beep2
-        play(double_beep)
-    except Exception as e:
-        print(f"Could not play beep: {e}")
+class KoraAssistant:
+    """Shared ElevenLabs + Snowflake helper with wake-word utilities."""
 
+    def __init__(
+        self,
+        *,
+        voice_id: str = DEFAULT_VOICE_ID,
+        prompt_path: Path = MCP_PROMPT_PATH,
+    ) -> None:
+        settings = get_settings()
+        api_key = settings.elevenlabs_api_key
+        if not api_key:
+            raise RuntimeError("ELEVENLABS_API_KEY must be configured.")
 
-def text_to_speech_stream(text: str):
-    """
-    Converts text to speech and plays it using ElevenLabs.
-    
-    Args:
-        text (str): The text to convert to speech and play.
-    """
-    try:
-        print(f"🔊 Speaking: {text}")
-        
-        response = client.text_to_speech.convert(
-            voice_id="CYw3kZ02Hs0563khs1Fj",
+        self.client = ElevenLabs(api_key=api_key)
+        self.voice_id = voice_id
+        self.recognizer = sr.Recognizer()
+        self.base_prompt = prompt_path.read_text(encoding="utf-8").strip()
+        self.conversation_history: List[str] = []
+
+    # ------------------------------------------------------------------
+    # Wake / goodbye helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _matches_any(text: Optional[str], phrases: Iterable[str]) -> bool:
+        if not text:
+            return False
+        normalized = text.lower()
+        return any(phrase in normalized for phrase in phrases)
+
+    def should_wake(self, transcript: Optional[str]) -> bool:
+        return self._matches_any(transcript, WAKE_PHRASES)
+
+    def should_end(self, transcript: Optional[str]) -> bool:
+        return self._matches_any(transcript, GOODBYE_PHRASES)
+
+    # ------------------------------------------------------------------
+    # Conversation history helpers
+    # ------------------------------------------------------------------
+    def append_history(self, speaker: str, text: str) -> None:
+        entry = f"{speaker.strip().title()}: {text.strip()}"
+        self.conversation_history.append(entry)
+
+    def reset_history(self) -> None:
+        self.conversation_history.clear()
+
+    def get_history(self, limit: int = 6) -> List[str]:
+        return self.conversation_history[-limit:]
+
+    # ------------------------------------------------------------------
+    # Prompt construction
+    # ------------------------------------------------------------------
+    def build_prompt(
+        self,
+        *,
+        vision_summary: str,
+        user_text: str,
+        instructions: Optional[str] = None,
+        conversation_history: Optional[List[str]] = None,
+    ) -> str:
+        segments = [self.base_prompt]
+        if instructions:
+            segments.append(f"Additional instructions:\n{instructions.strip()}")
+        history = conversation_history if conversation_history is not None else self.get_history()
+        if history:
+            segments.append("Conversation so far:\n" + "\n".join(history))
+        segments.append(f"Vision context:\n{vision_summary.strip()}")
+        segments.append(f"User:\n{user_text.strip()}\nAssistant:")
+        return "\n\n".join(segments)
+
+    # ------------------------------------------------------------------
+    # Speech helpers
+    # ------------------------------------------------------------------
+    def synthesize(self, text: str) -> bytes:
+        response = self.client.text_to_speech.convert(
+            voice_id=self.voice_id,
             optimize_streaming_latency="0",
             output_format="mp3_22050_32",
             text=text,
@@ -69,136 +115,126 @@ def text_to_speech_stream(text: str):
                 use_speaker_boost=True,
             ),
         )
+        audio_bytes = bytearray()
+        for chunk in response:
+            if chunk:
+                audio_bytes.extend(chunk)
+        return bytes(audio_bytes)
 
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        save_file_path = os.path.join(script_dir, "Audio.mp3")  # Absolute path
+    def play_text(self, text: str) -> None:
+        audio_bytes = self.synthesize(text)
+        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
+        play(audio_segment)
 
-        with open(save_file_path, "wb") as f:
-            for chunk in response:
-                if chunk:
-                    f.write(chunk)
-
-        # Play the audio
-        audio = AudioSegment.from_mp3(save_file_path)
-        play(audio)
-        print("✅ Audio playback completed.\n")
-        
-    except Exception as e:
-        print(f"❌ Error in text-to-speech: {e}")
-
-
-def speech_to_text() -> str:
-    """
-    Captures audio from the microphone and converts it to text.
-
-    Returns:
-        str: The transcribed text from the audio, or empty string if failed.
-    """
-    recognizer = sr.Recognizer()
-    
-    with sr.Microphone() as source:
-        # Clear visual indication that listening has started
-        print("\n" + "="*60)
-        print("🎤 LISTENING NOW - Speak your message!")
-        print("="*60)
-        
-        # Play audio beep to indicate listening
-        play_listening_beep()
-        
-        recognizer.adjust_for_ambient_noise(source, duration=0.5)
-        
+    def transcribe_base64(self, audio_base64: str) -> Optional[str]:
         try:
-            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
-            
-            # Play processing beep
-            print("\n⏳ Processing your speech...")
-            play_processing_beep()
-            
-            text = recognizer.recognize_google(audio)
-            print(f"✅ You said: {text}\n")
-            return text
-            
-        except sr.WaitTimeoutError:
-            print("❌ No speech detected within timeout period.\n")
-            return ""
+            raw = base64.b64decode(audio_base64)
+        except (ValueError, TypeError):
+            return None
+        return self._transcribe_raw(raw)
+
+    def _transcribe_raw(self, raw_audio: bytes) -> Optional[str]:
+        audio_segment = AudioSegment.from_file(io.BytesIO(raw_audio))
+        wav_io = io.BytesIO()
+        audio_segment.export(wav_io, format="wav")
+        wav_io.seek(0)
+        with sr.AudioFile(wav_io) as source:
+            audio_data = self.recognizer.record(source)
+        return self._recognize(audio_data)
+
+    def listen_blocking(
+        self,
+        *,
+        timeout: float = 5.0,
+        phrase_time_limit: float = 10.0,
+    ) -> Optional[str]:
+        with sr.Microphone() as source:
+            self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            try:
+                audio = self.recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+            except sr.WaitTimeoutError:
+                return None
+        return self._recognize(audio)
+
+    def _recognize(self, audio_data: sr.AudioData) -> Optional[str]:
+        try:
+            transcript = self.recognizer.recognize_google(audio_data)
         except sr.UnknownValueError:
-            print("❌ Could not understand audio.\n")
-            return ""
-        except sr.RequestError as e:
-            print(f"❌ Could not request results from speech recognition service; {e}\n")
-            return ""
+            return None
+        except sr.RequestError as exc:
+            print(f"[VOICE] Speech recognition service unavailable: {exc}")
+            return None
+        return transcript.strip() or None
 
 
-def conversation_loop():
-    """
-    Main conversation loop for the navigation assistant.
-    Listens for user input, gets response from Snowflake LLM, and speaks it.
-    """
-    print("\n" + "="*60)
-    print("🚀 Navigation Assistant Started!")
-    print("="*60)
-    print("💡 TIP: Listen for the beep sound - that's when you should speak!")
-    print("💡 Say 'exit' or 'quit' to stop the program.")
-    print("="*60 + "\n")
-    
-    # Initialize Snowflake LLM client
+assistant = KoraAssistant()
+
+
+def get_assistant() -> KoraAssistant:
+    return assistant
+
+
+# ----------------------------------------------------------------------
+# Optional CLI entry point (preserves teammate workflow)
+# ----------------------------------------------------------------------
+def _play_listening_beep() -> None:
+    beep = Sine(440).to_audio_segment(duration=200)
+    play(beep)
+
+
+def _play_processing_beep() -> None:
+    beep1 = Sine(440).to_audio_segment(duration=100)
+    silence = AudioSegment.silent(duration=100)
+    beep2 = Sine(520).to_audio_segment(duration=100)
+    play(beep1 + silence + beep2)
+
+
+def conversation_loop() -> None:
+    """Legacy CLI loop for teammates."""
     llm_client = SnowflakeLLMClient()
-    
-    # Greeting
-    text_to_speech_stream("Hello! I'm your navigation assistant. How can I help you today?")
-    
-    # Store conversation context
-    conversation_history = []
-    
+    conv_active = False
+    inactivity_deadline = 0.0
+    print("\nSay 'Hey Kora' to start. Say 'bye' to exit.\n")
     try:
         while True:
-            # Small pause before listening again
-            time.sleep(0.5)
-            
-            # Listen for user input
-            user_speech = speech_to_text()
-            
-            if not user_speech:
-                print("⏸️  Waiting for your next command...\n")
+            transcript = assistant.listen_blocking()
+            if not transcript:
+                if conv_active and time.time() > inactivity_deadline:
+                    print("[WAKE] Conversation timed out.")
+                    conv_active = False
+                    assistant.reset_history()
                 continue
-            
-            # Check for exit commands
-            if user_speech.lower() in ['exit', 'quit', 'stop', 'goodbye']:
-                print("👋 Shutting down...")
-                text_to_speech_stream("Goodbye! Stay safe.")
-                break
-            
-            # Add user message to history
-            conversation_history.append(f"User: {user_speech}")
-            
-            # Get response from Snowflake LLM
-            print("🤖 Getting response from AI...")
-            
-            # Build context from recent conversation history (last 3 exchanges)
-            context = "\n".join(conversation_history[-6:]) if conversation_history else ""
-            
-            llm_response = llm_client.get_contextual_response(
-                user_message=user_speech,
-                context=context
+
+            print(f"[VOICE] Heard: {transcript}")
+            if not conv_active:
+                if assistant.should_wake(transcript):
+                    conv_active = True
+                    assistant.reset_history()
+                    inactivity_deadline = time.time() + 20
+                    assistant.play_text("I'm listening.")
+                continue
+
+            inactivity_deadline = time.time() + 20
+            if assistant.should_end(transcript):
+                assistant.play_text("Goodbye! Stay safe.")
+                conv_active = False
+                assistant.reset_history()
+                continue
+
+            assistant.append_history("User", transcript)
+            prompt = assistant.build_prompt(
+                vision_summary="No visual context in CLI mode.",
+                user_text=transcript,
+                conversation_history=assistant.get_history(),
             )
-            
-            if llm_response:
-                # Add assistant response to history
-                conversation_history.append(f"Assistant: {llm_response}")
-                
-                # Speak the response (removed console print of response)
-                text_to_speech_stream(llm_response)
-            else:
-                # Fallback response if LLM fails
-                fallback = "I'm sorry, I'm having trouble processing that right now. Could you try again?"
-                text_to_speech_stream(fallback)
-                
+            _play_processing_beep()
+            response = llm_client.get_response(prompt) or "I'm sorry, I didn't catch that."
+            assistant.append_history("Assistant", response)
+            assistant.play_text(response)
     except KeyboardInterrupt:
-        print("\n\n👋 Program interrupted by user")
+        print("\n[CLI] Interrupted by user.")
     finally:
-        # Clean up
         llm_client.close()
-        print("✅ Navigation assistant closed")
 
 
 if __name__ == "__main__":

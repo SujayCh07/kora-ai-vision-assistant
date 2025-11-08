@@ -23,7 +23,7 @@ if str(VISION_DIR) not in sys.path:
     sys.path.append(str(VISION_DIR))
 
 from config import get_settings
-from vision.integrations.elevenlabs_bridge import ElevenLabsBridge
+from ElevenLabs.main import get_assistant
 from vision.integrations.snowflake_client import SnowflakeLLM
 from vision.pipeline import VisionPipeline
 from vision.schemas import Environment, FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata
@@ -32,13 +32,7 @@ WINDOW_VISION = "Assistive Overlay"
 WINDOW_YOLO = "YOLO Detections"
 WINDOW_DEPTH = "MiDaS Depth"
 
-with open("mcp_prompt.txt", "r", encoding="utf-8") as file:
-    text = file.read()
-
-DEFAULT_PROMPT = (text)
-WAKE_PHRASES = ("hey kora", "hey cora", "hey kory", "hey core")
-GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "thank you kora")
-INACTIVITY_TIMEOUT = 25.0  # seconds of silence before ending the convo
+INACTIVITY_TIMEOUT = 15.0  # seconds of silence before ending the convo
 
 
 class SpeechListener:
@@ -185,16 +179,6 @@ def wrap_text(text: str, width: int) -> list[str]:
     return lines
 
 
-def build_llm_prompt(instructions: Optional[str], vision_summary: str, user_text: str) -> str:
-    system = (instructions or DEFAULT_PROMPT).strip()
-    return (
-        f"{system}\n\n"
-        f"Vision context:\n{vision_summary}\n\n"
-        f"User request:\n{user_text}\n\n"
-        "Respond in the assistant's voice with concrete guidance."
-    )
-
-
 def play_audio_bytes(audio_bytes: bytes) -> None:
     audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
     play(audio_segment)
@@ -206,8 +190,9 @@ def run_cycle(
     environment: Environment,
     prompt_instructions: Optional[str],
     audio_base64: Optional[str],
+    transcript_text: Optional[str],
     pipeline: VisionPipeline,
-    eleven: ElevenLabsBridge,
+    assistant,
     snowflake: SnowflakeLLM,
     synthesize_voice: bool,
 ) -> FrameAnalysisResponse:
@@ -227,20 +212,28 @@ def run_cycle(
     print("[PIPELINE] Vision results ready.")
 
     update: dict[str, Optional[str]] = {}
-    if audio_base64:
+    user_transcript = transcript_text
+    if audio_base64 and not user_transcript:
         print("[AUDIO] Transcribing captured speech via ElevenLabs workflow...")
-        transcript = eleven.transcribe_base64_audio(audio_base64)
-        update["user_transcript"] = transcript
-        if transcript:
-            print(f"[AUDIO] Transcript: {transcript}")
-            prompt = build_llm_prompt(prompt_instructions, response.vision_summary, transcript)
+        user_transcript = assistant.transcribe_base64(audio_base64)
+    if audio_base64:
+        update["user_transcript"] = user_transcript
+        if user_transcript:
+            print(f"[AUDIO] Transcript: {user_transcript}")
+            assistant.append_history("User", user_transcript)
+            prompt = assistant.build_prompt(
+                vision_summary=response.vision_summary,
+                user_text=user_transcript,
+                instructions=prompt_instructions,
+            )
             print("[LLM] Sending prompt to Snowflake Cortex...")
             llm_text = snowflake.complete(prompt)
             print("[LLM] Received response.")
+            assistant.append_history("Assistant", llm_text)
             update["llm_response"] = llm_text
             if synthesize_voice:
                 print("[TTS] Synthesizing ElevenLabs audio...")
-                audio_bytes = eleven.synthesize(llm_text)
+                audio_bytes = assistant.synthesize(llm_text)
                 update["audio_response_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
                 play_audio_bytes(audio_bytes)
         else:
@@ -285,7 +278,7 @@ def main() -> None:
         raise RuntimeError("SNOWFLAKE_* credentials must be configured for the full demo.")
 
     pipeline = VisionPipeline()
-    eleven = ElevenLabsBridge(api_key=settings.elevenlabs_api_key)
+    assistant = get_assistant()
     snowflake = SnowflakeLLM(
         account=settings.snowflake_account,
         user=settings.snowflake_user,
@@ -317,12 +310,6 @@ def main() -> None:
     conversation_active = False
     last_user_activity = 0.0
 
-    def transcript_contains(text: Optional[str], phrases: tuple[str, ...]) -> bool:
-        if not text:
-            return False
-        normalized = text.lower()
-        return any(phrase in normalized for phrase in phrases)
-
     try:
         while True:
             ret, frame = cap.read()
@@ -345,16 +332,17 @@ def main() -> None:
             transcript_for_wake: Optional[str] = None
             if speech_audio:
                 try:
-                    transcript_for_wake = eleven.transcribe_base64_audio(speech_audio) or ""
+                    transcript_for_wake = assistant.transcribe_base64(speech_audio) or ""
                     print(f"[VOICE] Transcript preview: {transcript_for_wake!r}")
                 except Exception as exc:
                     print(f"[VOICE] Transcript failed during wake detection: {exc}")
                     transcript_for_wake = ""
 
             if not conversation_active:
-                if transcript_contains(transcript_for_wake, WAKE_PHRASES):
+                if assistant.should_wake(transcript_for_wake):
                     conversation_active = True
                     last_user_activity = now
+                    assistant.reset_history()
                     print("[WAKE] Wake phrase detected. Conversation started.")
                     # rerun cycle with the same audio to capture the request
                 else:
@@ -362,9 +350,10 @@ def main() -> None:
 
             if conversation_active and transcript_for_wake:
                 last_user_activity = now
-                if transcript_contains(transcript_for_wake, GOODBYE_PHRASES):
+                if assistant.should_end(transcript_for_wake):
                     print("[WAKE] Goodbye phrase detected, ending conversation.")
                     conversation_active = False
+                    assistant.reset_history()
                     continue
 
             if (
@@ -380,8 +369,9 @@ def main() -> None:
                     environment=environment,
                     prompt_instructions=args.prompt,
                     audio_base64=speech_audio if conversation_active else None,
+                    transcript_text=transcript_for_wake if conversation_active else None,
                     pipeline=pipeline,
-                    eleven=eleven,
+                    assistant=assistant,
                     snowflake=snowflake,
                     synthesize_voice=args.voice and conversation_active and bool(speech_audio),
                 )
@@ -390,9 +380,10 @@ def main() -> None:
                 log_packages(response)
                 if response.user_transcript:
                     last_user_activity = now
-                    if transcript_contains(response.user_transcript, GOODBYE_PHRASES):
+                    if assistant.should_end(response.user_transcript):
                         print("[WAKE] Goodbye phrase detected in transcript, ending conversation.")
                         conversation_active = False
+                        assistant.reset_history()
             else:
                 print("[PIPELINE] Waiting for wake phrase or refresh...", end="\r")
 
@@ -402,6 +393,7 @@ def main() -> None:
             ):
                 print("[WAKE] Conversation timed out due to inactivity.")
                 conversation_active = False
+                assistant.reset_history()
 
             if last_response is not None:
                 annotated = draw_overlay(frame, last_response, environment, last_response.llm_response)
