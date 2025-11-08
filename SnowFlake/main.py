@@ -11,14 +11,14 @@ cur = conn.cursor()
 
 query = """
 SELECT SNOWFLAKE.CORTEX.COMPLETE(
-    'claude-3-5-sonnet',
-    'How are you doing today?'
+    'mistral-7b',
+    'Who was the first president of the United States'
 ) AS response;
 """
 
 cur.execute(query)
 row = cur.fetchone()
-print("Claude response:", row[0])
+print(row[0])
 
 cur.close()
 conn.close()
