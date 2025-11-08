@@ -14,7 +14,7 @@ else:  # pragma: no cover
     from .schemas import FrameAnalysisRequest, FrameAnalysisResponse
 
 app = FastAPI(
-    title="AI-ATL Blind Assistance",
+    title="AI-ATL Blind Assistance",    
     version="1.0.0",
     description="End-to-end pipeline using YOLO (object detection) + MiDaS (depth).",
 )
