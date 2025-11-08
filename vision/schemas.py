@@ -17,6 +17,11 @@ class Quadrant(str, Enum):
     BOTTOM_RIGHT = "bottom_right"
 
 
+class Environment(str, Enum):
+    INDOOR = "indoor"
+    OUTDOOR = "outdoor"
+
+
 class BoundingBox(BaseModel):
     x_min: float = Field(..., ge=0.0, le=1.0)
     y_min: float = Field(..., ge=0.0, le=1.0)
@@ -61,6 +66,7 @@ class FrameAnalysisRequest(BaseModel):
     timestamp: datetime
     frame_metadata: FrameMetadata
     image_base64: str = Field(..., description="RGB frame encoded as base64 string")
+    environment: Environment = Environment.INDOOR
 
 
 class FrameAnalysisResponse(BaseModel):
