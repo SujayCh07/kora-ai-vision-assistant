@@ -1,0 +1,10 @@
+# .gitignore
+
+# Ignore Python cache and environment files
+__pycache__/
+*.pyc
+.env
+venv/
+
+# Ignore config file with sensitive data
+config.py
