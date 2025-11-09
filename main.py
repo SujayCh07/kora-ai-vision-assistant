@@ -20,13 +20,29 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
 from config import ELEVENLABS_API_KEY  # noqa: E402  (import after adjusting sys.path)
-from SnowFlakeLLMClient import SnowflakeLLMClient
+import sys
+import os
+
+# Add the folder containing this script to sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Now you can safely import
+from SnowflakeLLMClient import SnowflakeLLMClient
 
 MCP_PROMPT_PATH = "mcp_prompt.txt"
 DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 WAKE_PHRASES = ("hey kora", "hey cora", "hey korra", "hey kory", "hey core", "hey cor")
 GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "bye korra", "thank you kora", "bye cor")
 from config import ELEVENLABS_API_KEY
+
+from pathlib import Path
+
+# Path to the file
+prompt_path = Path(__file__).parent / "mcp_prompt.txt"
+
+# Read all text and strip any leading/trailing whitespace
+prompt_text = prompt_path.read_text(encoding="utf-8").strip()
+
 
 class KoraAssistant:
     """Shared ElevenLabs + Snowflake helper with wake-word utilities."""
@@ -40,7 +56,7 @@ class KoraAssistant:
         self.client = ElevenLabs(api_key=api_key)
         self.voice_id = voice_id
         self.recognizer = sr.Recognizer()
-        self.base_prompt = prompt_path.read_text(encoding="utf-8").strip()
+        self.base_prompt = prompt_text
         self.conversation_history: List[str] = []
 
     # ------------------------------------------------------------------
