@@ -76,11 +76,21 @@ export class KoraSocket {
     return false
   }
 
-  sendFrame(imageData) {
-    // Send base64 encoded frame for analysis
+  sendFrame(framePayload) {
+    if (!framePayload) return
+
+    const payload = typeof framePayload === 'string' ? { data: framePayload } : framePayload
+    if (!payload.data) {
+      console.warn('No frame data provided')
+      return
+    }
+
     this.send({
       type: 'frame',
-      data: imageData,
+      data: payload.data,
+      width: payload.width,
+      height: payload.height,
+      environment: payload.environment,
       timestamp: Date.now(),
     })
   }
