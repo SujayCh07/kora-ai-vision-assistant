@@ -14,6 +14,7 @@ from typing import Optional
 
 import cv2
 import numpy as np
+import pygame
 import speech_recognition as sr
 from pydub import AudioSegment
 from pydub.generators import Sine
@@ -36,38 +37,91 @@ WINDOW_VISION = "Assistive Overlay"
 WINDOW_YOLO = "YOLO Detections"
 WINDOW_DEPTH = "MiDaS Depth"
 
-INACTIVITY_TIMEOUT = 15.0  # seconds of silence before ending the convo
+INACTIVITY_TIMEOUT = 45.0  # seconds of silence before ending the convo
+PROXIMITY_THRESHOLD = 0.11  # meters - play alert if object is closer than this
 
 
-def play_beep(frequency: int = 800, duration_ms: int = 200) -> None:
-    """Play a beep sound at specified frequency and duration."""
-    try:
-        beep = Sine(frequency).to_audio_segment(duration=duration_ms)
-        play(beep)
-    except Exception as e:
-        print(f"[BEEP] Error playing beep: {e}")
-
-
-def play_start_recording_beep() -> None:
-    """Play ascending beep to indicate recording started."""
-    try:
-        beep1 = Sine(600).to_audio_segment(duration=100)
-        beep2 = Sine(800).to_audio_segment(duration=100)
-        combined = beep1 + beep2
-        play(combined)
-    except Exception as e:
-        print(f"[BEEP] Error playing start beep: {e}")
-
-
-def play_stop_recording_beep() -> None:
-    """Play descending beep to indicate recording stopped."""
-    try:
-        beep1 = Sine(800).to_audio_segment(duration=100)
-        beep2 = Sine(600).to_audio_segment(duration=100)
-        combined = beep1 + beep2
-        play(combined)
-    except Exception as e:
-        print(f"[BEEP] Error playing stop beep: {e}")
+class ProximityAlert:
+    """Handles proximity alert sounds."""
+    
+    def __init__(self):
+        """Initialize pygame mixer for playing alert sounds."""
+        pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+        self._alert_sound = None
+        self._last_alert_time = 0.0
+        self._alert_cooldown = 2.0  # seconds between alerts to avoid spam
+        
+    def create_alert_sound(self):
+        """Create a simple beep sound programmatically."""
+        sample_rate = 22050
+        duration = 0.3  # seconds
+        frequency = 800  # Hz
+        
+        # Generate a sine wave beep
+        samples = int(sample_rate * duration)
+        wave = np.sin(2 * np.pi * frequency * np.linspace(0, duration, samples))
+        
+        # Apply envelope to avoid clicks
+        envelope = np.ones(samples)
+        fade_samples = int(sample_rate * 0.05)
+        envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
+        envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
+        wave = wave * envelope
+        
+        # Convert to 16-bit PCM
+        wave = (wave * 32767).astype(np.int16)
+        
+        # Create stereo sound
+        stereo_wave = np.column_stack((wave, wave))
+        
+        # Create pygame Sound object
+        sound = pygame.sndarray.make_sound(stereo_wave)
+        return sound
+    
+    def initialize(self):
+        """Initialize the alert sound."""
+        try:
+            self._alert_sound = self.create_alert_sound()
+            print("[ALERT] Proximity alert system initialized")
+        except Exception as exc:
+            print(f"[ALERT] Warning: Could not initialize alert sound: {exc}")
+    
+    def check_and_alert(self, response: FrameAnalysisResponse) -> bool:
+        """
+        Check if any objects are within proximity threshold and play alert.
+        
+        Returns:
+            True if alert was played, False otherwise
+        """
+        if self._alert_sound is None:
+            return False
+        
+        now = time.time()
+        
+        # Check cooldown
+        if now - self._last_alert_time < self._alert_cooldown:
+            return False
+        
+        # Find closest object
+        closest_distance = float('inf')
+        closest_object = None
+        
+        for obj in response.objects:
+            if obj.relative_depth_m is not None and obj.relative_depth_m < closest_distance:
+                closest_distance = obj.relative_depth_m
+                closest_object = obj
+        
+        # Trigger alert if within threshold
+        if closest_distance <= PROXIMITY_THRESHOLD:
+            try:
+                self._alert_sound.play()
+                self._last_alert_time = now
+                print(f"[ALERT] ⚠️  {closest_object.label} detected at {closest_distance:.2f}m!")
+                return True
+            except Exception as exc:
+                print(f"[ALERT] Error playing sound: {exc}")
+        
+        return False
 
 
 class SpeechListener:
@@ -208,9 +262,13 @@ def draw_yolo_view(frame: np.ndarray, response: FrameAnalysisResponse) -> np.nda
         y_min = int(obj.bounding_box.y_min * h)
         x_max = int(obj.bounding_box.x_max * w)
         y_max = int(obj.bounding_box.y_max * h)
-        cv2.rectangle(view, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2, cv2.LINE_AA)
+        
+        # Use red color for proximity alerts
+        color = (0, 0, 255) if (obj.relative_depth_m and obj.relative_depth_m <= PROXIMITY_THRESHOLD) else (0, 255, 0)
+        cv2.rectangle(view, (x_min, y_min), (x_max, y_max), color, 2, cv2.LINE_AA)
+        
         label = f"{obj.label} ({obj.confidence:.2f})"
-        cv2.putText(view, label, (x_min, max(18, y_min - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.putText(view, label, (x_min, max(18, y_min - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
     cv2.putText(view, "YOLO detections", (16, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
     return view
 
@@ -223,12 +281,26 @@ def draw_overlay(frame: np.ndarray, response: FrameAnalysisResponse, environment
         cv2.line(annotated, (i * w // 3, 0), (i * w // 3, h), grid_color, 1, cv2.LINE_AA)
         cv2.line(annotated, (0, i * h // 3), (w, i * h // 3), grid_color, 1, cv2.LINE_AA)
 
+    # Check for proximity alerts
+    has_proximity_alert = any(
+        obj.relative_depth_m and obj.relative_depth_m <= PROXIMITY_THRESHOLD 
+        for obj in response.objects
+    )
+
     for obj in response.objects:
         x_min = int(obj.bounding_box.x_min * w)
         y_min = int(obj.bounding_box.y_min * h)
         x_max = int(obj.bounding_box.x_max * w)
         y_max = int(obj.bounding_box.y_max * h)
-        color = (0, 200, 255) if obj.quadrant.value == "center" else (0, 200, 0)
+        
+        # Use red for proximity alerts, orange for center, green otherwise
+        if obj.relative_depth_m and obj.relative_depth_m <= PROXIMITY_THRESHOLD:
+            color = (0, 0, 255)  # Red for close objects
+        elif obj.quadrant.value == "center":
+            color = (0, 200, 255)  # Orange for center
+        else:
+            color = (0, 200, 0)  # Green for normal
+            
         cv2.rectangle(annotated, (x_min, y_min), (x_max, y_max), color, 2, cv2.LINE_AA)
         depth_text = f"{obj.relative_depth_m:.2f}" if obj.relative_depth_m is not None else "n/a"
         cv2.putText(
@@ -250,6 +322,15 @@ def draw_overlay(frame: np.ndarray, response: FrameAnalysisResponse, environment
     )
     cv2.putText(annotated, center_text, (18, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
     cv2.putText(annotated, f"Mode: {environment.value}", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 255, 180), 2, cv2.LINE_AA)
+
+    # Show status
+    status_color = (0, 255, 255) if "PROCESSING" in status else (0, 255, 0)
+    cv2.putText(annotated, status, (18, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2, cv2.LINE_AA)
+    
+    # Show proximity warning
+    if has_proximity_alert:
+        warning_text = f"⚠️  PROXIMITY ALERT - Object within {PROXIMITY_THRESHOLD}m"
+        cv2.putText(annotated, warning_text, (18, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
 
     if llm_text:
         y = h - 90
@@ -364,14 +445,19 @@ class PersistentElevenLabsConnection:
         self.client = eleven_client
         self._connection_active = False
         
-    def __enter__(self):
-        """Establish persistent connection."""
-        try:
-            self._connection_active = True
-            print("[ELEVENLABS] Persistent connection established")
-        except Exception as e:
-            print(f"[ELEVENLABS] Error establishing persistent connection: {e}")
-        return self
+        # Describe each quadrant
+        for quadrant, objects in by_quadrant.items():
+            obj_descriptions = []
+            for obj in objects:
+                depth_str = f"{obj.relative_depth_m:.1f} meters away" if obj.relative_depth_m else "unknown distance"
+                # Add proximity warning to description
+                if obj.relative_depth_m and obj.relative_depth_m <= PROXIMITY_THRESHOLD:
+                    depth_str += " ⚠️ VERY CLOSE"
+                obj_descriptions.append(f"{obj.label} ({depth_str})")
+            
+            parts.append(f"- In the {quadrant.replace('_', ' ')}: {', '.join(obj_descriptions)}")
+    else:
+        parts.append("I don't see any specific objects detected in the current view.")
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Close persistent connection."""
@@ -445,13 +531,13 @@ def run_cycle(
     eleven_conn: PersistentElevenLabsConnection,
     snowflake_conn: PersistentLLMConnection,
     synthesize_voice: bool,
-    always_narrate: bool = True,
-    listener: Optional[SpeechListener] = None,
-) -> tuple[FrameAnalysisResponse, bool]:
-    """
-    Returns: (response, audio_was_played)
-    """
-    print("[PIPELINE] Building request payload.")
+    proximity_alert: ProximityAlert,
+) -> FrameAnalysisResponse:
+    #print("\n" + "="*80)
+    #print("[CYCLE] START")
+    #print("="*80)
+    
+    # Vision processing
     request = FrameAnalysisRequest(
         frame_id=f"demo-{int(time.time() * 1000)}",
         timestamp=datetime.utcnow(),
@@ -464,7 +550,15 @@ def run_cycle(
     )
     print("[PIPELINE] Running vision pipeline...")
     response = pipeline.process(request)
-    print("[PIPELINE] Vision results ready.")
+    #print(f"[1/5] ✓ Found {len(response.objects)} objects")
+    
+    # Check for proximity alerts
+    proximity_alert.check_and_alert(response)
+    
+    # Log what we detected
+    for obj in response.objects:
+        depth_str = f"{obj.relative_depth_m:.1f}m" if obj.relative_depth_m else "n/a"
+        #print(f"      - {obj.label} @ {obj.quadrant.value} ({depth_str})")
 
     update: dict[str, Optional[str]] = {}
     user_transcript = None
@@ -558,8 +652,9 @@ def main() -> None:
     )
     parser.add_argument("--interval", type=float, default=5.0, help="Seconds between automatic narration")
     parser.add_argument("--prompt", type=str, default=None, help="Optional custom system instructions")
-    parser.add_argument("--voice", action="store_true", help="Enable voice synthesis (REQUIRED for audio output)")
-    parser.add_argument("--listen-time", type=float, default=7.0, help="Max seconds per utterance")
+    parser.add_argument("--voice", action="store_true", help="Enable voice synthesis")
+    parser.add_argument("--listen-time", type=float, default=8.0, help="Max seconds per utterance")
+    parser.add_argument("--no-alert", action="store_true", help="Disable proximity alert sounds")
     args = parser.parse_args()
 
     if not args.voice:
@@ -583,6 +678,11 @@ def main() -> None:
         role="ACCOUNTADMIN",
         model=MODEL,
     )
+    
+    # Initialize proximity alert system
+    proximity_alert = ProximityAlert()
+    if not args.no_alert:
+        proximity_alert.initialize()
 
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
     if not cap.isOpened():
@@ -591,9 +691,11 @@ def main() -> None:
     recognizer = sr.Recognizer()
     microphone = sr.Microphone()
     listener = SpeechListener(recognizer, microphone, phrase_time_limit=args.listen_time)
-    print(f"[VOICE] Background listener ready (phrase limit {args.listen_time}s).")
-    print("[VOICE] Say 'Hey Kora' to ask questions about your surroundings.")
-    print("[VOICE] System will automatically describe your environment every few seconds.")
+    listener.start()
+    
+    #print(f"\nVOICE: {'ENABLED' if args.voice else 'DISABLED'}")
+    #print(f"PROXIMITY ALERT: {'ENABLED' if not args.no_alert else 'DISABLED'}")
+    #print(f"Say wake phrase to start\n")
 
     environment = Environment(args.environment)
     cv2.namedWindow(WINDOW_VISION, cv2.WINDOW_NORMAL)
@@ -663,75 +765,74 @@ def main() -> None:
                         play_beep(frequency=600, duration_ms=150)  # Goodbye beep
                         continue
                     
-                    # Play "processing" beep once when we receive the question
-                    play_stop_recording_beep()
+                    try:
+                        response = run_cycle(
+                            frame=frame,
+                            metadata=metadata,
+                            environment=environment,
+                            prompt_instructions=args.prompt,
+                            audio_base64=speech_audio,
+                            pipeline=pipeline,
+                            assistant=assistant,
+                            snowflake=snowflake,
+                            synthesize_voice=args.voice,
+                            proximity_alert=proximity_alert,
+                        )
+                        last_response = response
+                        last_run = now
+                        
+                        if response.user_transcript:
+                            last_user_activity = now
+                            
+                    except Exception as exc:
+                        #print(f"ERROR in cycle: {exc}")
+                        import traceback
+                    finally:
+                        status = "Active - listening"
+                        listener.resume_acceptance()
+                        #print("Ready for next input\n")
                     
-                    # User asked a question - process it
-                    print("[STATE] Processing user question in conversation mode")
-                    response, audio_played = run_cycle(
-                        frame=frame,
-                        metadata=metadata,
-                        environment=environment,
-                        prompt_instructions=args.prompt,
-                        audio_base64=speech_audio,
-                        pipeline=pipeline,
-                        eleven_conn=eleven_conn,
-                        snowflake_conn=snowflake_conn,
-                        synthesize_voice=args.voice,
-                        always_narrate=True,
-                        listener=listener,
-                    )
-                    last_response = response
-                    last_run = now
-                    log_packages(response)
-                    
-                    # After audio response completes, beep to signal ready for next input
-                    if audio_played:
-                        play_start_recording_beep()
+            # Periodic vision refresh
+            if now - last_run >= args.interval and metadata and not conversation_active:
+                request = FrameAnalysisRequest(
+                    frame_id=f"demo-{int(time.time() * 1000)}",
+                    timestamp=datetime.utcnow(),
+                    frame_metadata=metadata,
+                    image_base64=frame_to_base64(frame),
+                    environment=environment,
+                    audio_base64=None,
+                    prompt_instructions=args.prompt,
+                    synthesize_voice=False,
+                )
+                response = pipeline.process(request)
+                last_response = response
+                last_run = now
+                
+                # Check for proximity alerts during periodic refresh too
+                if not args.no_alert:
+                    proximity_alert.check_and_alert(response)
 
-                # Automatic narration on interval (even without user speech)
-                elif should_refresh and metadata is not None:
-                    print("[STATE] Running automatic assistive narration")
-                    response, audio_played = run_cycle(
-                        frame=frame,
-                        metadata=metadata,
-                        environment=environment,
-                        prompt_instructions=args.prompt,
-                        audio_base64=None,  # No user speech
-                        pipeline=pipeline,
-                        eleven_conn=eleven_conn,
-                        snowflake_conn=snowflake_conn,
-                        synthesize_voice=args.voice,
-                        always_narrate=True,  # Always generate narration
-                        listener=listener,
-                    )
-                    last_response = response
-                    last_run = now
-                    log_packages(response)
-                    
-                    # After automatic narration, beep to signal ready if in conversation mode
-                    if audio_played and conversation_active:
-                        play_start_recording_beep()
-                else:
-                    print("[PIPELINE] Waiting for next interval or user speech...", end="\r")
+            # Timeout
+            if conversation_active and now - last_user_activity > INACTIVITY_TIMEOUT:
+                #print(f"\nTimeout after {INACTIVITY_TIMEOUT}s\n")
+                conversation_active = False
+                assistant.reset_history()
+                status = "Waiting for wake phrase..."
 
-                # Timeout inactive conversations
-                if conversation_active and now - last_user_activity > INACTIVITY_TIMEOUT:
-                    print("\n[WAKE] Conversation timed out due to inactivity.")
-                    conversation_active = False
-
-                # Display windows
-                if last_response is not None:
-                    annotated = draw_overlay(frame, last_response, environment, last_response.llm_response)
-                    yolo_view = draw_yolo_view(frame, last_response)
-                    depth_view = render_depth(pipeline.last_depth_map, frame.shape[:2])
-                    cv2.imshow(WINDOW_VISION, annotated)
-                    cv2.imshow(WINDOW_YOLO, yolo_view)
-                    cv2.imshow(WINDOW_DEPTH, depth_view)
-        finally:
-            cap.release()
-            cv2.destroyAllWindows()
-            listener.stop()
+            # Update display
+            if last_response is not None:
+                annotated = draw_overlay(frame, last_response, environment, last_response.llm_response, status)
+                yolo_view = draw_yolo_view(frame, last_response)
+                depth_view = render_depth(pipeline.last_depth_map, frame.shape[:2])
+                cv2.imshow(WINDOW_VISION, annotated)
+                cv2.imshow(WINDOW_YOLO, yolo_view)
+                cv2.imshow(WINDOW_DEPTH, depth_view)
+                
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        listener.stop()
+        pygame.mixer.quit()
 
 
 if __name__ == "__main__":
