@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
 
-ELEVENLABS_API_KEY = "sk_6233b614b4a27f27f8f043bba1124120b030bf1300792e6a"
+ELEVENLABS_API_KEY = "sk_bbf2f943f10fe8ac633518838027574b0b856ceb21f92b7a"
 SNOWFLAKE_ACCOUNT = "QOGVOOL-RYC76187"
 SNOWFLAKE_USER = "AdityaJha"
 SNOWFLAKE_MODEL = "CLAUDE-3-5-SONNET"
