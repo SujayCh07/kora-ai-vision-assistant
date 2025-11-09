@@ -22,7 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from config import ELEVENLABS_API_KEY  # noqa: E402  (import after adjusting sys.path)
 from SnowFlakeLLMClient import SnowflakeLLMClient
 
-MCP_PROMPT_PATH = PROJECT_ROOT / "mcp_prompt.txt"
+MCP_PROMPT_PATH = "mcp_prompt.txt"
 DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 WAKE_PHRASES = ("hey kora", "hey cora", "hey korra", "hey kory", "hey core", "hey cor")
 GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "bye korra", "thank you kora", "bye cor")
