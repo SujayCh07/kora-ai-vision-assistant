@@ -261,23 +261,36 @@ export default function LivePage() {
             {/* Describe button - center */}
             <motion.button
               onClick={handleDescribe}
-              whileHover={{ scale: 1.1 }}
+              whileHover={{ scale: 1.08 }}
               whileTap={{ scale: 0.95 }}
-              transition={{ duration: 0.2 }}
-              className="flex flex-col items-center space-y-2"
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              className="group relative flex flex-col items-center gap-3"
               aria-label="Describe surroundings"
             >
               <motion.div
-                animate={{ boxShadow: ['0 10px 15px -3px rgba(0, 217, 163, 0.3)', '0 20px 25px -5px rgba(0, 217, 163, 0.5)', '0 10px 15px -3px rgba(0, 217, 163, 0.3)'] }}
-                transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-                className="w-16 h-16 rounded-2xl bg-gradient-to-br from-kora-primary to-kora-secondary flex items-center justify-center"
+                animate={{
+                  boxShadow: [
+                    '0 18px 35px -12px rgba(16, 185, 129, 0.6)',
+                    '0 22px 45px -10px rgba(14, 116, 144, 0.55)',
+                    '0 18px 35px -12px rgba(16, 185, 129, 0.6)'
+                  ],
+                }}
+                transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+                className="relative flex h-20 w-20 items-center justify-center rounded-[26px] bg-gradient-to-br from-kora-primary via-sky-500 to-kora-secondary"
               >
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
+                <span className="absolute -inset-4 rounded-[32px] bg-kora-primary/20 blur-3xl transition-opacity group-hover:opacity-80" aria-hidden="true" />
+                <span className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-xl">
+                  <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 1a3 3 0 00-3 3v6a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 10a7 7 0 01-14 0" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 17v4" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 21h8" />
+                  </svg>
+                </span>
               </motion.div>
-              <span className="text-xs font-medium text-white/80">Describe</span>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-[0.45em] text-white/70">
+                Tap to Speak
+              </span>
             </motion.button>
 
             {/* Settings button */}

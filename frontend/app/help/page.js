@@ -34,7 +34,7 @@ export default function HelpPage() {
 
                 <div>
                   <h3 className="font-semibold text-white mb-2">2. Start a Session</h3>
-                  <p>Click "Start Vision Session" on the home page or say "Hey Kora" to activate voice control. The live view will open with your camera feed.</p>
+                  <p>Click “Start Vision Session” on the home page or say “Hey Kora” to activate voice control. The live view will open with your camera feed.</p>
                 </div>
 
                 <div>
@@ -125,7 +125,7 @@ export default function HelpPage() {
 
               <div className="space-y-3 text-gray-300">
                 <p>
-                  <strong className="text-white">Local Processing:</strong> All vision processing happens in real-time. We don't store your camera feed or personal data.
+                  <strong className="text-white">Local Processing:</strong> All vision processing happens in real-time. We don’t store your camera feed or personal data.
                 </p>
                 <p>
                   <strong className="text-white">Secure Connection:</strong> All communications with the backend use encrypted WebSocket connections.
@@ -213,7 +213,7 @@ export default function HelpPage() {
               </h2>
 
               <p className="text-gray-300 mb-4">
-                If you're experiencing issues or have questions, we're here to help!
+                If you’re experiencing issues or have questions, we’re here to help!
               </p>
 
               <div className="flex flex-wrap gap-3">

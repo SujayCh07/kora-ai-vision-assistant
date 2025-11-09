@@ -11,7 +11,9 @@ export default function Navigation() {
 
   const navItems = [
     { href: '/', label: 'Home', icon: '🏠' },
+    { href: '/camera', label: 'Camera', icon: '📷' },
     { href: '/live', label: 'Live', icon: '📹' },
+    { href: '/people', label: 'People', icon: '👥' },
     { href: '/settings', label: 'Settings', icon: '⚙️' },
     { href: '/help', label: 'Help', icon: '❓' },
   ]
@@ -27,7 +29,8 @@ export default function Navigation() {
 
         <div className="flex space-x-1">
           {navItems.map(item => {
-            const isActive = pathname === item.href
+            const isActive =
+              pathname === item.href || pathname.startsWith(`${item.href}/`)
             return (
               <Link
                 key={item.href}
@@ -39,6 +42,7 @@ export default function Navigation() {
                     : 'text-gray-400 hover:text-white hover:bg-kora-panel'
                   }
                 `}
+                aria-current={isActive ? 'page' : undefined}
               >
                 <span className="mr-2">{item.icon}</span>
                 <span className="hidden sm:inline">{item.label}</span>
