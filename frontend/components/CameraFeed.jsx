@@ -9,7 +9,6 @@ import { motion } from 'framer-motion'
  */
 const CameraFeed = forwardRef(({
   onFrame,
-  onDimensionsChange,
   isActive = true,
   className = ''
 }, ref) => {
@@ -18,7 +17,6 @@ const CameraFeed = forwardRef(({
   const streamRef = useRef(null)
   const [error, setError] = useState(null)
   const [isReady, setIsReady] = useState(false)
-  const [dimensions, setDimensions] = useState({ width: 640, height: 480 })
 
   // Initialize camera
   useEffect(() => {
@@ -56,46 +54,18 @@ const CameraFeed = forwardRef(({
     }
   }, [isActive])
 
-  // Update canvas dimensions when metadata becomes available
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video) return
-
-    const updateDimensions = () => {
-      const width = video.videoWidth || 640
-      const height = video.videoHeight || 480
-      if (canvasRef.current) {
-        canvasRef.current.width = width
-        canvasRef.current.height = height
-      }
-      setDimensions(prev => {
-        if (prev.width === width && prev.height === height) {
-          return prev
-        }
-        return { width, height }
-      })
-      if (typeof onDimensionsChange === 'function') {
-        onDimensionsChange({ width, height })
-      }
-    }
-
-    updateDimensions()
-    video.addEventListener('loadedmetadata', updateDimensions)
-    video.addEventListener('resize', updateDimensions)
-
-    return () => {
-      video.removeEventListener('loadedmetadata', updateDimensions)
-      video.removeEventListener('resize', updateDimensions)
-    }
-  }, [onDimensionsChange])
-
   // Expose video dimensions to parent
   useImperativeHandle(ref, () => ({
-    getVideoDimensions: () => ({
-      width: dimensions.width,
-      height: dimensions.height
-    })
-  }), [dimensions])
+    getVideoDimensions: () => {
+      if (videoRef.current) {
+        return {
+          width: videoRef.current.videoWidth,
+          height: videoRef.current.videoHeight
+        }
+      }
+      return { width: 640, height: 480 }
+    }
+  }))
 
   // Capture and send frames periodically
   useEffect(() => {
@@ -107,23 +77,14 @@ const CameraFeed = forwardRef(({
 
       if (canvas && video) {
         const ctx = canvas.getContext('2d')
-        const { width, height } = dimensions
-        if (canvas.width !== width || canvas.height !== height) {
-          canvas.width = width
-          canvas.height = height
-        }
-        ctx.drawImage(video, 0, 0, width, height)
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         const frameData = canvas.toDataURL('image/jpeg', 0.8)
-        onFrame({
-          data: frameData,
-          width,
-          height
-        })
+        onFrame(frameData)
       }
     }, 100) // 10 FPS
 
     return () => clearInterval(interval)
-  }, [isReady, onFrame, dimensions])
+  }, [isReady, onFrame])
 
   if (error) {
     return (

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import CameraFeed from '@/components/CameraFeed'
@@ -17,16 +17,6 @@ export default function LivePage() {
   const [connectionStatus, setConnectionStatus] = useState('connecting')
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [cameraDimensions, setCameraDimensions] = useState({ width: 640, height: 480 })
-
-  const updateCameraDimensions = useCallback(({ width, height }) => {
-    if (typeof width !== 'number' || typeof height !== 'number') return
-    setCameraDimensions(prev => {
-      if (prev.width === width && prev.height === height) {
-        return prev
-      }
-      return { width, height }
-    })
-  }, [])
 
   const socketRef = useRef(null)
   const voiceRef = useRef(null)
@@ -78,15 +68,11 @@ export default function LivePage() {
         voiceRef.current.stop()
       }
     }
-  }, [handleDetection])
+  }, [])
 
   // Handle detection from backend
-  const handleDetection = useCallback((data) => {
+  const handleDetection = (data) => {
     // Update detections
-    if (data.dimensions) {
-      updateCameraDimensions({ width: data.dimensions.width, height: data.dimensions.height })
-    }
-
     if (data.objects) {
       const formattedDetections = data.objects.map(obj => ({
         bbox: obj.bbox,
@@ -111,18 +97,12 @@ export default function LivePage() {
         setTimeout(() => setIsSpeaking(false), 2000)
       }
     }
-  }, [updateCameraDimensions])
+  }
 
   // Handle camera frames
-  const handleFrame = (frame) => {
-    if (!frame) return
-
-    if (typeof frame.width === 'number' && typeof frame.height === 'number') {
-      updateCameraDimensions({ width: frame.width, height: frame.height })
-    }
-
+  const handleFrame = (frameData) => {
     if (socketRef.current?.isConnected()) {
-      socketRef.current.sendFrame(frame)
+      socketRef.current.sendFrame(frameData)
     }
   }
 
@@ -155,7 +135,6 @@ export default function LivePage() {
         isActive={isActive}
         detections={detections}
         onFrame={handleFrame}
-        onDimensionsChange={updateCameraDimensions}
         className="absolute inset-0 w-full h-full"
       />
 

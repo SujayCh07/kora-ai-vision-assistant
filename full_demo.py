@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import base64
 import io
 import queue
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +17,9 @@ import numpy as np
 import pygame
 import speech_recognition as sr
 from pydub import AudioSegment
+from pydub.generators import Sine
 from pydub.playback import play
+from pydub.generators import Sine
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 VISION_DIR = PROJECT_ROOT / "vision"
@@ -24,7 +28,7 @@ if str(VISION_DIR) not in sys.path:
     sys.path.append(str(VISION_DIR))
 
 from config import get_settings
-from main import get_assistant
+from ElevenLabs.main import get_assistant
 from vision.integrations.snowflake_client import SnowflakeLLM
 from vision.pipeline import VisionPipeline
 from vision.schemas import Environment, FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata, Quadrant
@@ -131,65 +135,116 @@ class SpeechListener:
         phrase_time_limit: float,
     ) -> None:
         self._queue: "queue.Queue[str]" = queue.Queue()
-        self._recognizer = recognizer
-        self._microphone = microphone
-        self._phrase_time_limit = phrase_time_limit
-        self._stopper = None
-        self._accepting_audio = True
+        self._is_paused = False
+        self._stopper = recognizer.listen_in_background(
+            microphone,
+            self._callback,
+            phrase_time_limit=phrase_time_limit,
+        )
 
     def _callback(self, recognizer: sr.Recognizer, audio: sr.AudioData) -> None:  # pylint: disable=unused-argument
-        if not self._accepting_audio:
-            return  # Silently ignore
-            
         try:
+            # Don't capture audio if paused (e.g., during TTS playback)
+            if self._is_paused:
+                print("[VOICE] Skipping audio capture (paused during playback)")
+                return
+                
             wav_bytes = audio.get_wav_data()
             audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
             self._queue.put(audio_b64)
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            #print(f"\n[{timestamp}] [VOICE] ✓ CAPTURED: {len(wav_bytes)} bytes")
+            print(f"\n[VOICE] Captured user speech chunk ({len(wav_bytes)} bytes).")
+            # Don't beep here - we'll control beeps from the main loop
         except Exception as exc:  # pragma: no cover
-            print(f"[VOICE] Error: {exc}")
+            print(f"[VOICE] Error capturing audio: {exc}")
 
-    def start(self) -> None:
-        """Start the background listener."""
-        if self._stopper is None:
-            self._stopper = self._recognizer.listen_in_background(
-                self._microphone,
-                self._callback,
-                phrase_time_limit=self._phrase_time_limit,
-            )
-            self._accepting_audio = True
-            #print("[VOICE] Listener started")
+    def pause(self) -> None:
+        """Pause audio capture (e.g., during TTS playback)"""
+        self._is_paused = True
+        print("[VOICE] Microphone paused")
 
-    def pause_acceptance(self) -> None:
-        """Stop accepting new audio (but keep listener running)."""
-        self._accepting_audio = False
-
-    def resume_acceptance(self) -> None:
-        """Resume accepting audio."""
-        self._accepting_audio = True
+    def resume(self) -> None:
+        """Resume audio capture"""
+        self._is_paused = False
+        print("[VOICE] Microphone resumed")
 
     def get_audio(self) -> Optional[str]:
-        """Get one audio chunk from queue."""
         try:
             return self._queue.get_nowait()
         except queue.Empty:
             return None
 
-    def clear_queue(self) -> None:
-        """Clear all pending audio."""
-        count = 0
-        while True:
-            try:
-                self._queue.get_nowait()
-                count += 1
-            except queue.Empty:
-                break
-
     def stop(self) -> None:
         if self._stopper:
             self._stopper(wait_for_stop=False)
-            self._stopper = None
+
+
+class ProximityBeepController:
+    """Background beeper that speeds up as obstacles get closer."""
+
+    def __init__(
+        self,
+        *,
+        closeness_threshold: float = 0.15,
+        center_trigger_threshold: float = 0.90,
+        min_interval: float = 0.15,
+        max_interval: float = 1.5,
+        beep_frequency: float = 880.0,
+        beep_duration_ms: int = 90,
+    ) -> None:
+        self.closeness_threshold = closeness_threshold
+        self.center_trigger_threshold = center_trigger_threshold
+        self.min_interval = min_interval
+        self.max_interval = max_interval
+        self._object_distance: Optional[float] = None
+        self._center_distance: Optional[float] = None
+        self._lock = threading.Lock()
+        self._running = True
+        self._beep_audio = Sine(beep_frequency).to_audio_segment(duration=beep_duration_ms).apply_gain(-6)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def update(self, object_distance: Optional[float], center_object_distance: Optional[float]) -> None:
+        with self._lock:
+            self._object_distance = object_distance
+            self._center_distance = center_object_distance
+
+    def stop(self) -> None:
+        self._running = False
+        self._thread.join(timeout=1.0)
+
+    def _loop(self) -> None:
+        last_play = 0.0
+        while self._running:
+            with self._lock:
+                object_distance = self._object_distance
+                center_distance = self._center_distance
+
+            effective_distance: Optional[float] = None
+            if center_distance is not None and center_distance > self.center_trigger_threshold:
+                effective_distance = 0.0  # force immediate beeps when straight ahead is very close
+            elif object_distance is not None:
+                effective_distance = object_distance
+
+            if effective_distance is None:
+                time.sleep(0.1)
+                continue
+
+            clamped = max(0.0, min(effective_distance, 1.0))
+            closeness = 1.0 - clamped  # 1.0 => very close, 0 => far
+            if closeness < self.closeness_threshold:
+                time.sleep(0.1)
+                continue
+
+            interval = self.max_interval - closeness * (self.max_interval - self.min_interval)
+            interval = max(self.min_interval, min(self.max_interval, interval))
+            now = time.time()
+            if now - last_play >= interval:
+                try:
+                    play(self._beep_audio)
+                except Exception as exc:  # pragma: no cover
+                    print(f"[BEEP] Failed to play proximity beep: {exc}")
+                last_play = now
+            time.sleep(0.04)
 
 
 def frame_to_base64(frame: np.ndarray) -> str:
@@ -218,7 +273,7 @@ def draw_yolo_view(frame: np.ndarray, response: FrameAnalysisResponse) -> np.nda
     return view
 
 
-def draw_overlay(frame: np.ndarray, response: FrameAnalysisResponse, environment: Environment, llm_text: Optional[str], status: str) -> np.ndarray:
+def draw_overlay(frame: np.ndarray, response: FrameAnalysisResponse, environment: Environment, llm_text: Optional[str]) -> np.ndarray:
     annotated = frame.copy()
     h, w = annotated.shape[:2]
     grid_color = (80, 80, 80)
@@ -285,7 +340,7 @@ def draw_overlay(frame: np.ndarray, response: FrameAnalysisResponse, environment
 
     cv2.putText(
         annotated,
-        "Speak naturally when ready. Press Q/Esc to quit.",
+        "Say 'Hey Kora' to ask questions. Press Q/Esc to quit.",
         (18, h - 20),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
@@ -326,34 +381,69 @@ def wrap_text(text: str, width: int) -> list[str]:
     return lines
 
 
-def play_audio_bytes(audio_bytes: bytes) -> None:
-    try:
-        #print(f"[TTS] Playing {len(audio_bytes)} bytes...")
-        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
-        #print(f"[TTS] Duration: {len(audio_segment)}ms")
-        play(audio_segment)
-        #print("[TTS] ✓✓✓ PLAYBACK COMPLETE ✓✓✓")
-    except Exception as exc:
-        #print(f"[TTS] ✗ PLAYBACK ERROR: {exc}")
-        import traceback
-        traceback.print_exc()
-
-
-def build_detailed_vision_summary(response: FrameAnalysisResponse) -> str:
-    """Build a detailed vision summary for the LLM."""
-    parts = []
+def build_assistive_prompt(instructions: Optional[str], vision_summary: str, user_text: Optional[str] = None) -> str:
+    """Build prompt for assistive navigation with or without user question."""
+    system = (instructions or DEFAULT_PROMPT).strip()
     
-    # Overall scene
-    if response.objects:
-        parts.append(f"I can see {len(response.objects)} objects in your environment:")
+    if user_text:
+        # User asked a specific question
+        return (
+            f"{system}\n\n"
+            f"Vision context:\n{vision_summary}\n\n"
+            f"User question:\n{user_text}\n\n"
+            "Respond conversationally to answer their question based on what you see."
+        )
+    else:
+        # Automatic assistive description
+        return (
+            f"{system}\n\n"
+            f"Vision context:\n{vision_summary}\n\n"
+            "Provide a brief, helpful description of the scene focusing on:\n"
+            "1. Key objects in the environment and their locations\n"
+            "2. Potential obstacles or hazards\n"
+            "3. Navigation guidance if needed\n"
+            "Keep it concise (2-3 sentences) and conversational."
+        )
+
+
+class PersistentLLMConnection:
+    """Manages a persistent connection to Snowflake LLM to avoid reconnecting each time."""
+    
+    def __init__(self, snowflake_client: SnowflakeLLM):
+        self.client = snowflake_client
+        self._connection_active = False
         
-        # Group by quadrant
-        by_quadrant = {}
-        for obj in response.objects:
-            quad = obj.quadrant.value
-            if quad not in by_quadrant:
-                by_quadrant[quad] = []
-            by_quadrant[quad].append(obj)
+    def __enter__(self):
+        """Establish persistent connection."""
+        try:
+            # Keep the Snowflake connection alive
+            self._connection_active = True
+            print("[LLM] Persistent connection established")
+        except Exception as e:
+            print(f"[LLM] Error establishing persistent connection: {e}")
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Close persistent connection."""
+        try:
+            self._connection_active = False
+            print("[LLM] Persistent connection closed")
+        except Exception as e:
+            print(f"[LLM] Error closing persistent connection: {e}")
+    
+    def complete(self, prompt: str) -> str:
+        """Send completion request using persistent connection."""
+        if not self._connection_active:
+            print("[LLM] Warning: Connection not active, using regular method")
+        return self.client.complete(prompt)
+
+
+class PersistentElevenLabsConnection:
+    """Manages persistent connection to ElevenLabs to avoid reconnecting each time."""
+    
+    def __init__(self, eleven_client: ElevenLabsBridge):
+        self.client = eleven_client
+        self._connection_active = False
         
         # Describe each quadrant
         for quadrant, objects in by_quadrant.items():
@@ -369,17 +459,65 @@ def build_detailed_vision_summary(response: FrameAnalysisResponse) -> str:
     else:
         parts.append("I don't see any specific objects detected in the current view.")
     
-    # Center depth information
-    if response.center_distance and response.center_distance.distance_m is not None:
-        parts.append(f"\nDirectly ahead of you, the distance is approximately {response.center_distance.distance_m:.1f} meters.")
-        if response.center_distance.advisory:
-            parts.append(f"Advisory: {response.center_distance.advisory}")
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Close persistent connection."""
+        try:
+            self._connection_active = False
+            print("[ELEVENLABS] Persistent connection closed")
+        except Exception as e:
+            print(f"[ELEVENLABS] Error closing persistent connection: {e}")
     
-    # Vision summary from pipeline
-    if response.vision_summary:
-        parts.append(f"\nAdditional context: {response.vision_summary}")
+    def transcribe_base64_audio(self, audio_base64: str) -> Optional[str]:
+        """Transcribe audio using persistent connection."""
+        if not self._connection_active:
+            print("[ELEVENLABS] Warning: Connection not active, using regular method")
+        return self.client.transcribe_base64_audio(audio_base64)
     
-    return "\n".join(parts)
+    def synthesize(self, text: str) -> bytes:
+        """Synthesize speech using persistent connection."""
+        if not self._connection_active:
+            print("[ELEVENLABS] Warning: Connection not active, using regular method")
+        return self.client.synthesize(text)
+
+
+def play_audio_bytes(audio_bytes: bytes) -> None:
+    """Play audio from bytes with multiple fallback methods."""
+    try:
+        print(f"[AUDIO] Received {len(audio_bytes)} bytes of audio data")
+        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
+        print(f"[AUDIO] Audio duration: {len(audio_segment)}ms")
+        print("[AUDIO] Playing audio now...")
+        
+        # Method 1: Try pydub's play() function
+        try:
+            play(audio_segment)
+            print("[AUDIO] Audio playback completed via pydub")
+            return
+        except Exception as e1:
+            print(f"[AUDIO] pydub play failed: {e1}")
+            
+            # Method 2: Try saving to temp file and playing with pygame/windows
+            try:
+                import tempfile
+                import os
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
+                    tmp.write(audio_bytes)
+                    tmp_path = tmp.name
+                
+                # Try using Windows' built-in player
+                os.system(f'start /min "" "{tmp_path}"')
+                time.sleep(len(audio_segment) / 1000.0 + 0.5)  # Wait for audio to finish
+                os.unlink(tmp_path)
+                print("[AUDIO] Audio playback completed via Windows player")
+                return
+            except Exception as e2:
+                print(f"[AUDIO] Windows player failed: {e2}")
+                
+                    
+    except Exception as e:
+        print(f"[AUDIO] Error in play_audio_bytes: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def run_cycle(
@@ -387,10 +525,11 @@ def run_cycle(
     metadata: FrameMetadata,
     environment: Environment,
     prompt_instructions: Optional[str],
-    audio_base64: str,
+    audio_base64: Optional[str],
+    transcript_text: Optional[str],
     pipeline: VisionPipeline,
-    assistant,
-    snowflake: SnowflakeLLM,
+    eleven_conn: PersistentElevenLabsConnection,
+    snowflake_conn: PersistentLLMConnection,
     synthesize_voice: bool,
     proximity_alert: ProximityAlert,
 ) -> FrameAnalysisResponse:
@@ -405,12 +544,11 @@ def run_cycle(
         frame_metadata=metadata,
         image_base64=frame_to_base64(frame),
         environment=environment,
-        audio_base64=None,
+        audio_base64=audio_base64,
         prompt_instructions=prompt_instructions,
-        synthesize_voice=False,
+        synthesize_voice=synthesize_voice,
     )
-    
-    #print("[1/5] Vision pipeline...")
+    print("[PIPELINE] Running vision pipeline...")
     response = pipeline.process(request)
     #print(f"[1/5] ✓ Found {len(response.objects)} objects")
     
@@ -423,110 +561,122 @@ def run_cycle(
         #print(f"      - {obj.label} @ {obj.quadrant.value} ({depth_str})")
 
     update: dict[str, Optional[str]] = {}
+    user_transcript = None
+    audio_was_played = False
     
-    # Transcribe user audio
-    #print("[2/5] Transcribing...")
-    try:
-        user_transcript = assistant.transcribe_base64(audio_base64)
-        #print(f"[2/5] ✓ '{user_transcript}'")
-    except Exception as exc:
-        #print(f"[2/5] ✗ ERROR: {exc}")
-        user_transcript = None
-    
-    # Process if we got valid transcript
-    if user_transcript and user_transcript.strip():
-        #print(f"\n[USER]: {user_transcript}\n")
-        
-        update["user_transcript"] = user_transcript
-        assistant.append_history("User", user_transcript)
-        
-        # Build detailed vision summary
-        detailed_vision = build_detailed_vision_summary(response)
-        #print("[VISION CONTEXT]:")
-        #print(detailed_vision)
-        #print()
-        
-        # Build prompt
-        #print("[3/5] Building prompt with vision data...")
-        prompt = assistant.build_prompt(
-            vision_summary=detailed_vision,
-            user_text=user_transcript,
-            instructions=prompt_instructions,
-        )
-        #print(f"[3/5] ✓ Prompt ready ({len(prompt)} chars)")
-        
-        # Get LLM response
-        #print("[4/5] Calling Snowflake...")
+    # Handle user speech if present
+    if audio_base64:
+        print("[AUDIO] Transcribing captured speech via ElevenLabs workflow...")
         try:
-            llm_text = snowflake.complete(prompt)
-            #print(f"[4/5] ✓ Got response ({len(llm_text)} chars)")
-            #print(f"\n[ASSISTANT]: {llm_text}\n")
-            
-            assistant.append_history("Assistant", llm_text)
+            transcript = eleven_conn.transcribe_base64_audio(audio_base64)
+            update["user_transcript"] = transcript
+            user_transcript = transcript
+            if transcript:
+                print(f"[AUDIO] Transcript: {transcript}")
+        except Exception as e:
+            print(f"[AUDIO] Transcription error: {e}")
+            update["user_transcript"] = None
+    
+    # Generate LLM response - either for user question or automatic narration
+    if always_narrate or user_transcript:
+        prompt = build_assistive_prompt(
+            prompt_instructions, 
+            response.vision_summary, 
+            user_transcript
+        )
+        print("[LLM] Sending prompt to Snowflake Cortex (persistent connection)...")
+        try:
+            llm_text = snowflake_conn.complete(prompt)
+            print("[LLM] Received response.")
+            print(f"[LLM] Response: {llm_text}")
             update["llm_response"] = llm_text
             
-            # Synthesize and play
-            if synthesize_voice and llm_text and llm_text.strip():
-                #print("[5/5] Synthesizing speech...")
+            # ALWAYS synthesize and play audio for LLM responses
+            if llm_text and synthesize_voice:
+                print("[TTS] Synthesizing ElevenLabs audio (persistent connection)...")
                 try:
-                    audio_bytes = assistant.synthesize(llm_text)
-                    #print(f"[5/5] ✓ Got audio ({len(audio_bytes)} bytes)")
+                    audio_bytes = eleven_conn.synthesize(llm_text)
+                    print(f"[TTS] Synthesis successful, got {len(audio_bytes)} bytes")
                     update["audio_response_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
                     
-                    play_audio_bytes(audio_bytes)
+                    # Pause microphone during playback
+                    if listener:
+                        listener.pause()
                     
-                except Exception as exc:
-                    #print(f"[5/5] ✗ TTS ERROR: {exc}")
+                    print("[TTS] Playing audio response...")
+                    play_audio_bytes(audio_bytes)
+                    print("[TTS] Audio playback complete")
+                    audio_was_played = True
+                    
+                    # Resume microphone after playback
+                    if listener:
+                        listener.resume()
+                        
+                except Exception as e:
+                    print(f"[TTS] Error synthesizing/playing audio: {e}")
+                    # Make sure to resume even if there's an error
+                    if listener:
+                        listener.resume()
                     import traceback
                     traceback.print_exc()
-            else:
-                if not synthesize_voice:
-                    print("[5/5] ⚠ Voice disabled")
-                #print("[5/5] Done (no TTS)")
-                    
-        except Exception as exc:
-            #rint(f"[4/5] ✗ LLM ERROR: {exc}")
-            import traceback
-            traceback.print_exc()
+        except Exception as e:
+            print(f"[LLM] Error: {e}")
+            update["llm_response"] = None
     
     if update:
         response = response.model_copy(update=update)
-    
-    #print("="*80)
-    #print("[CYCLE] COMPLETE")
-    #print("="*80 + "\n")
-    return response
+    return response, audio_was_played
+
+
+def log_packages(response: FrameAnalysisResponse) -> None:
+    print("\n" + "=" * 80)
+    print(f"Frame: {response.frame_id}")
+    for obj in response.objects:
+        depth = f"{obj.relative_depth_m:.2f}" if obj.relative_depth_m is not None else "n/a"
+        print(f"- {obj.label:<12} quadrant={obj.quadrant.value:<13} depth={depth:<6} conf={obj.confidence:.2f}")
+    center = response.center_distance
+    print("Center depth:", center.distance_m, "confidence:", center.confidence, "advisory:", center.advisory)
+    if response.user_transcript:
+        print("Transcript:", response.user_transcript)
+    if response.llm_response:
+        print("LLM response:", response.llm_response)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Full-stack demo (vision + ElevenLabs + SnowFlake)")
+    parser = argparse.ArgumentParser(description="Full-stack assistive vision demo with audio feedback")
     parser.add_argument("--camera", type=int, default=0, help="Webcam index (default 0)")
     parser.add_argument(
         "--environment",
         choices=[Environment.INDOOR.value, Environment.OUTDOOR.value],
         default=Environment.INDOOR.value,
     )
-    parser.add_argument("--interval", type=float, default=5.0, help="Seconds between automatic vision refreshes")
+    parser.add_argument("--interval", type=float, default=5.0, help="Seconds between automatic narration")
     parser.add_argument("--prompt", type=str, default=None, help="Optional custom system instructions")
     parser.add_argument("--voice", action="store_true", help="Enable voice synthesis")
     parser.add_argument("--listen-time", type=float, default=8.0, help="Max seconds per utterance")
     parser.add_argument("--no-alert", action="store_true", help="Disable proximity alert sounds")
     args = parser.parse_args()
 
-    from config import ELEVENLABS_API_KEY, SNOWFLAKE_USER, SNOWFLAKE_ACCOUNT, SNOWFLAKE_MODEL, SNOWFLAKE_PASSWORD
+    if not args.voice:
+        print("[WARNING] Voice synthesis is disabled. Use --voice flag to enable audio output.")
 
-    #print("\n" + "="*80)
-    #print("INITIALIZING SYSTEM")
-    #print("="*80)
-    
+    from config import ELEVENLABS_API_KEY 
     pipeline = VisionPipeline()
-    assistant = get_assistant()
+    eleven = ElevenLabsBridge(api_key="sk_f78639cb226795df18b498c6ce0834688ccc5df0ff92b776")
+
+    # === CONFIGURATION ===
+    ACCOUNT = "QOGVOOL-RYC76187"
+    REGION = "us-east-1"
+    USER = "ADITYAJHA"
+    PASSWORD = "7D8Wt-%iT6dHh9,1!£$!Z9"
+    MODEL = "claude-3-5-sonnet"
+
     snowflake = SnowflakeLLM(
-        account=SNOWFLAKE_ACCOUNT,
-        user=SNOWFLAKE_USER,
-        password=SNOWFLAKE_PASSWORD,
+        account=ACCOUNT,
+        user=USER,
+        password=PASSWORD,
         role="ACCOUNTADMIN",
-        model=SNOWFLAKE_MODEL,
+        model=MODEL,
     )
     
     # Initialize proximity alert system
@@ -536,11 +686,9 @@ def main() -> None:
 
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        raise RuntimeError(f"Unable to open webcam {args.camera}")
+        raise RuntimeError(f"Unable to open webcam index {args.camera}")
 
     recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 300
-    recognizer.dynamic_energy_threshold = True
     microphone = sr.Microphone()
     listener = SpeechListener(recognizer, microphone, phrase_time_limit=args.listen_time)
     listener.start()
@@ -559,62 +707,63 @@ def main() -> None:
     last_response: Optional[FrameAnalysisResponse] = None
     conversation_active = False
     last_user_activity = 0.0
-    status = "Waiting for wake phrase..."
 
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+    def transcript_contains(text: Optional[str], phrases: tuple[str, ...]) -> bool:
+        if not text:
+            return False
+        normalized = text.lower()
+        return any(phrase in normalized for phrase in phrases)
 
-            if metadata is None:
-                height, width = frame.shape[:2]
-                metadata = FrameMetadata(width=width, height=height, focal_length_px=None)
+    # Use persistent connections for better performance
+    with PersistentElevenLabsConnection(eleven) as eleven_conn, \
+         PersistentLLMConnection(snowflake) as snowflake_conn:
+        
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("Failed to capture frame. Exiting.")
+                    break
 
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
+                if metadata is None:
+                    height, width = frame.shape[:2]
+                    metadata = FrameMetadata(width=width, height=height, focal_length_px=None)
 
-            now = time.time()
-            speech_audio = listener.get_audio()
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    break
 
-            if speech_audio:
-                listener.pause_acceptance()
-                listener.clear_queue()
-                
-                # Quick check for wake/goodbye
-                try:
-                    transcript = assistant.transcribe_base64(speech_audio) or ""
-                    #print(f"\n[HEARD]: '{transcript}'")
-                except Exception:
-                    transcript = ""
+                now = time.time()
+                speech_audio = listener.get_audio()
+                should_refresh = now - last_run >= args.interval
 
-                # Wake detection
+                transcript_for_wake: Optional[str] = None
+                if speech_audio:
+                    try:
+                        transcript_for_wake = eleven_conn.transcribe_base64_audio(speech_audio) or ""
+                        print(f"[VOICE] Transcript preview: {transcript_for_wake!r}")
+                    except Exception as exc:
+                        print(f"[VOICE] Transcript failed during wake detection: {exc}")
+                        transcript_for_wake = ""
+
+                # Wake phrase detection
                 if not conversation_active:
-                    if transcript and assistant.should_wake(transcript):
+                    if transcript_contains(transcript_for_wake, WAKE_PHRASES):
                         conversation_active = True
                         last_user_activity = now
-                        assistant.reset_history()
-                        #print("\n*** CONVERSATION STARTED ***\n")
-                        status = "Active - listening"
-                    else:
-                        #print("(Not wake phrase)")
-                        listener.resume_acceptance()
-                        speech_audio = None
+                        print("[WAKE] Wake phrase detected. Listening for your question...")
+                        play_start_recording_beep()  # Beep to indicate listening started
+                        # Don't process this audio, wait for next speech
+                        continue
 
-                # Goodbye detection
-                if conversation_active and transcript and assistant.should_end(transcript):
-                    #print("\n*** CONVERSATION ENDED ***\n")
-                    conversation_active = False
-                    assistant.reset_history()
-                    status = "Waiting for wake phrase..."
-                    listener.resume_acceptance()
-                    continue
-
-                # Process in conversation
-                if conversation_active and speech_audio and metadata is not None:
-                    status = "PROCESSING..."
+                # Handle user questions during active conversation
+                if conversation_active and speech_audio and transcript_for_wake:
                     last_user_activity = now
+                    if transcript_contains(transcript_for_wake, GOODBYE_PHRASES):
+                        print("[WAKE] Goodbye phrase detected, ending conversation.")
+                        conversation_active = False
+                        play_beep(frequency=600, duration_ms=150)  # Goodbye beep
+                        continue
                     
                     try:
                         response = run_cycle(

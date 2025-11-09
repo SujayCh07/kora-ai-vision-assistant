@@ -9,8 +9,6 @@ venv/
 # Ignore config file with sensitive data
 #config.py
 rsa_key.p8
-rsa_key.der 
-config.py
 
 # Python cache and build artifacts
 __pycache__/

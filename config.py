@@ -5,6 +5,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+ELEVENLABS_API_KEY = "sk_f78639cb226795df18b498c6ce0834688ccc5df0ff92b776"
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
 
