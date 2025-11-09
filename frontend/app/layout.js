@@ -1,6 +1,4 @@
 import './globals.css'
-import BootGate from '@/components/BootGate'
-import Navigation from '@/components/Navigation'
 
 export const metadata = {
   title: 'Kora - AI Vision Assistant',
@@ -16,11 +14,8 @@ export default function RootLayout({ children }) {
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="theme-color" content="#000000" />
       </head>
-      <body className="overflow-hidden bg-black text-white">
-        <BootGate>
-          <Navigation />
-          {children}
-        </BootGate>
+      <body className="overflow-hidden">
+        {children}
       </body>
     </html>
   )
