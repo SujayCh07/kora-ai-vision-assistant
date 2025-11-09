@@ -1,8 +1,8 @@
 'use client'
 
-import Link from 'next/link'
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 
 const navItems = [
   {
@@ -68,75 +68,56 @@ const navItems = [
 ]
 
 export default function AppDock({ className = '', showMic = false, onMicPress }) {
+  const router = useRouter()
   const pathname = usePathname()
-  const normalizedPath = !pathname || pathname === '/' ? '/camera' : pathname
+
+  const currentPath = useMemo(() => pathname ?? '/camera', [pathname])
 
   return (
-    <div className={`pointer-events-auto flex flex-col items-center gap-6 ${className}`}>
+    <div className={`pointer-events-auto flex flex-col items-center gap-10 ${className}`}>
       {showMic && (
-        <div className="flex flex-col items-center gap-3">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
-          >
-            <motion.button
-              onClick={onMicPress}
-              whileTap={{ scale: 0.9 }}
-              animate={{ boxShadow: ['0 0 0 0 rgba(56,189,248,0.35)', '0 0 0 22px rgba(59,130,246,0)'] }}
-              transition={{ repeat: Infinity, duration: 1.8, ease: 'easeOut' }}
-              className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-teal-400 via-sky-500 to-indigo-500 text-white"
-              aria-label="Activate microphone"
-            >
-              <span className="absolute -inset-3 rounded-full bg-teal-400/20 blur-2xl" aria-hidden="true" />
-              <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-white/15 backdrop-blur">
-                <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 1a3 3 0 00-3 3v6a3 3 0 006 0V4a3 3 0 00-3-3z" />
-                  <path d="M19 10a7 7 0 01-14 0" />
-                  <path d="M12 17v4" />
-                  <path d="M8 21h8" />
-                </svg>
-              </span>
-            </motion.button>
-          </motion.div>
-
-          <span className="text-[0.65rem] font-semibold uppercase tracking-[0.45em] text-white/70">
-            Tap to Speak
+        <motion.button
+          onClick={onMicPress}
+          whileTap={{ scale: 0.92 }}
+          animate={{ boxShadow: ['0 0 0 0 rgba(56,189,248,0.35)', '0 0 0 20px rgba(45,212,191,0)'] }}
+          transition={{ repeat: Infinity, duration: 1.8, ease: 'easeOut' }}
+          className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-teal-400 via-sky-500 to-indigo-500 text-white shadow-[0_15px_35px_rgba(56,189,248,0.35)]"
+          aria-label="Activate microphone"
+        >
+          <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-white/20">
+            <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 1a3 3 0 00-3 3v6a3 3 0 006 0V4a3 3 0 00-3-3z" />
+              <path d="M19 10a7 7 0 01-14 0" />
+              <path d="M12 17v4" />
+              <path d="M8 21h8" />
+            </svg>
           </span>
-        </div>
+        </motion.button>
       )}
 
-      <div className="relative flex w-[85vw] max-w-xl items-center justify-around rounded-[28px] border border-white/15 bg-white/10 px-6 py-4 backdrop-blur-3xl">
-        <span className="pointer-events-none absolute inset-x-6 -top-4 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" aria-hidden="true" />
+      <div className="flex w-[85vw] max-w-xl items-center justify-around rounded-2xl border border-white/15 bg-white/15 px-6 py-4 backdrop-blur-2xl">
         {navItems.map((item) => {
-          const isActive = normalizedPath === item.path || normalizedPath.startsWith(`${item.path}/`)
+          const isActive = currentPath === item.path
           return (
-            <Link
+            <motion.button
               key={item.path}
-              href={item.path}
-              className="group relative flex h-12 w-12 items-center justify-center"
+              onClick={() => router.push(item.path)}
+              whileTap={{ scale: 0.94 }}
+              className="flex h-10 w-16 items-center justify-center rounded-2xl"
               aria-label={item.label}
-              aria-current={isActive ? 'page' : undefined}
             >
-              <motion.span
+              <motion.div
                 initial={false}
-                whileTap={{ scale: 0.94 }}
                 animate={{ scale: isActive ? 1.05 : 1 }}
-                className={`flex h-full w-full items-center justify-center rounded-2xl transition-colors ${
+                className={`flex h-full w-full items-center justify-center rounded-2xl ${
                   isActive
-                    ? 'bg-gradient-to-br from-teal-400/40 via-sky-500/40 to-indigo-500/40 text-white shadow-[0_12px_30px_rgba(37,99,235,0.35)]'
-                    : 'text-white/70'
+                    ? 'bg-gradient-to-br from-teal-400/70 via-sky-500/70 to-indigo-500/70 text-white shadow-[0_0_25px_rgba(59,130,246,0.35)]'
+                    : ''
                 }`}
               >
                 {item.icon(isActive)}
-              </motion.span>
-              {!isActive && (
-                <span
-                  className="absolute inset-0 rounded-2xl border border-white/10 opacity-0 transition-opacity group-hover:opacity-100"
-                  aria-hidden="true"
-                />
-              )}
-            </Link>
+              </motion.div>
+            </motion.button>
           )
         })}
       </div>

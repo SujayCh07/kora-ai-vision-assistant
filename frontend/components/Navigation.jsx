@@ -54,7 +54,15 @@ const navItems = [
 
 export default function Navigation() {
   const pathname = usePathname()
-  const normalizedPath = !pathname || pathname === '/' ? '/camera' : pathname
+
+  const navItems = [
+    { href: '/', label: 'Home', icon: '🏠' },
+    { href: '/camera', label: 'Camera', icon: '📷' },
+    { href: '/live', label: 'Live', icon: '📹' },
+    { href: '/people', label: 'People', icon: '👥' },
+    { href: '/settings', label: 'Settings', icon: '⚙️' },
+    { href: '/help', label: 'Help', icon: '❓' },
+  ]
 
   return (
     <nav className="pointer-events-none fixed left-0 right-0 top-0 z-[100]">
@@ -102,17 +110,29 @@ export default function Navigation() {
             })}
           </div>
 
-          <div className="hidden min-w-[9rem] flex-col items-end gap-1 text-[0.6rem] uppercase tracking-[0.35em] text-white/60 sm:flex">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
-              <span>Signal Stable</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-sky-400" aria-hidden="true" />
-              <span>Battery 92%</span>
-            </div>
-          </div>
-        </motion.div>
+        <div className="flex space-x-1">
+          {navItems.map(item => {
+            const isActive =
+              pathname === item.href || pathname.startsWith(`${item.href}/`)
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`
+                  px-4 py-2 rounded-lg transition-all duration-200
+                  ${isActive
+                    ? 'bg-kora-gradient text-white shadow-kora-glow'
+                    : 'text-gray-400 hover:text-white hover:bg-kora-panel'
+                  }
+                `}
+                aria-current={isActive ? 'page' : undefined}
+              >
+                <span className="mr-2">{item.icon}</span>
+                <span className="hidden sm:inline">{item.label}</span>
+              </Link>
+            )
+          })}
+        </div>
       </div>
     </nav>
   )
