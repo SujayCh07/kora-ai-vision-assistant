@@ -6,6 +6,7 @@ import base64
 import io
 import queue
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ import cv2
 import numpy as np
 import speech_recognition as sr
 from pydub import AudioSegment
+from pydub.generators import Sine
 from pydub.playback import play
 from pydub.generators import Sine
 
@@ -25,22 +27,16 @@ if str(VISION_DIR) not in sys.path:
     sys.path.append(str(VISION_DIR))
 
 from config import get_settings
-from vision.integrations.elevenlabs_bridge import ElevenLabsBridge
+from ElevenLabs.main import get_assistant
 from vision.integrations.snowflake_client import SnowflakeLLM
 from vision.pipeline import VisionPipeline
-from vision.schemas import Environment, FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata
+from vision.schemas import Environment, FrameAnalysisRequest, FrameAnalysisResponse, FrameMetadata, Quadrant
 
 WINDOW_VISION = "Assistive Overlay"
 WINDOW_YOLO = "YOLO Detections"
 WINDOW_DEPTH = "MiDaS Depth"
 
-with open("mcp_prompt.txt", "r", encoding="utf-8") as file:
-    text = file.read()
-
-DEFAULT_PROMPT = (text)
-WAKE_PHRASES = ("hey kora", "hey cora", "hey kory", "hey core")
-GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "thank you kora")
-INACTIVITY_TIMEOUT = 25.0  # seconds of silence before ending the convo
+INACTIVITY_TIMEOUT = 15.0  # seconds of silence before ending the convo
 
 
 def play_beep(frequency: int = 800, duration_ms: int = 200) -> None:
@@ -126,6 +122,75 @@ class SpeechListener:
     def stop(self) -> None:
         if self._stopper:
             self._stopper(wait_for_stop=False)
+
+
+class ProximityBeepController:
+    """Background beeper that speeds up as obstacles get closer."""
+
+    def __init__(
+        self,
+        *,
+        closeness_threshold: float = 0.15,
+        center_trigger_threshold: float = 0.90,
+        min_interval: float = 0.15,
+        max_interval: float = 1.5,
+        beep_frequency: float = 880.0,
+        beep_duration_ms: int = 90,
+    ) -> None:
+        self.closeness_threshold = closeness_threshold
+        self.center_trigger_threshold = center_trigger_threshold
+        self.min_interval = min_interval
+        self.max_interval = max_interval
+        self._object_distance: Optional[float] = None
+        self._center_distance: Optional[float] = None
+        self._lock = threading.Lock()
+        self._running = True
+        self._beep_audio = Sine(beep_frequency).to_audio_segment(duration=beep_duration_ms).apply_gain(-6)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def update(self, object_distance: Optional[float], center_object_distance: Optional[float]) -> None:
+        with self._lock:
+            self._object_distance = object_distance
+            self._center_distance = center_object_distance
+
+    def stop(self) -> None:
+        self._running = False
+        self._thread.join(timeout=1.0)
+
+    def _loop(self) -> None:
+        last_play = 0.0
+        while self._running:
+            with self._lock:
+                object_distance = self._object_distance
+                center_distance = self._center_distance
+
+            effective_distance: Optional[float] = None
+            if center_distance is not None and center_distance > self.center_trigger_threshold:
+                effective_distance = 0.0  # force immediate beeps when straight ahead is very close
+            elif object_distance is not None:
+                effective_distance = object_distance
+
+            if effective_distance is None:
+                time.sleep(0.1)
+                continue
+
+            clamped = max(0.0, min(effective_distance, 1.0))
+            closeness = 1.0 - clamped  # 1.0 => very close, 0 => far
+            if closeness < self.closeness_threshold:
+                time.sleep(0.1)
+                continue
+
+            interval = self.max_interval - closeness * (self.max_interval - self.min_interval)
+            interval = max(self.min_interval, min(self.max_interval, interval))
+            now = time.time()
+            if now - last_play >= interval:
+                try:
+                    play(self._beep_audio)
+                except Exception as exc:  # pragma: no cover
+                    print(f"[BEEP] Failed to play proximity beep: {exc}")
+                last_play = now
+            time.sleep(0.04)
 
 
 def frame_to_base64(frame: np.ndarray) -> str:
@@ -375,6 +440,7 @@ def run_cycle(
     environment: Environment,
     prompt_instructions: Optional[str],
     audio_base64: Optional[str],
+    transcript_text: Optional[str],
     pipeline: VisionPipeline,
     eleven_conn: PersistentElevenLabsConnection,
     snowflake_conn: PersistentLLMConnection,
