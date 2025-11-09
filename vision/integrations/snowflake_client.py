@@ -28,10 +28,23 @@ class SnowflakeLLM:
         self.database = database
         self.schema = schema
         self.model = model
+        self._conn: Optional[snowflake.connector.SnowflakeConnection] = None
+        self._connect()
 
-    def complete(self, prompt: str, *, model: Optional[str] = None) -> str:
-        active_model = model or self.model
-        conn = snowflake.connector.connect(
+    def _connect(self) -> None:
+        if self._conn is not None:
+            try:
+                with self._conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                return
+            except Exception:
+                try:
+                    self._conn.close()  # pragma: no cover - best-effort
+                except Exception:
+                    pass
+                self._conn = None
+
+        self._conn = snowflake.connector.connect(
             account=self.account,
             user=self.user,
             password=self.password,
@@ -40,8 +53,12 @@ class SnowflakeLLM:
             database=self.database,
             schema=self.schema,
         )
+
+    def complete(self, prompt: str, *, model: Optional[str] = None) -> str:
+        active_model = model or self.model
+        self._connect()
         try:
-            with conn.cursor() as cur:
+            with self._conn.cursor() as cur:  # type: ignore[union-attr]
                 cur.execute(
                     "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS response",
                     (active_model, prompt),
@@ -50,5 +67,15 @@ class SnowflakeLLM:
                 if not row or not row[0]:
                     raise RuntimeError("Snowflake Cortex did not return a response.")
                 return row[0]
-        finally:
-            conn.close()
+        except Exception:
+            self._conn = None
+            self._connect()
+            with self._conn.cursor() as cur:  # type: ignore[union-attr]
+                cur.execute(
+                    "SELECT SNOWFLAKE.CORTEX.COMPLETE(%s, %s) AS response",
+                    (active_model, prompt),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    raise RuntimeError("Snowflake Cortex did not return a response.")
+                return row[0]
