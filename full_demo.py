@@ -74,7 +74,7 @@ class SpeechListener:
                 phrase_time_limit=self._phrase_time_limit,
             )
             self._accepting_audio = True
-            print("[VOICE] Listener started")
+            #print("[VOICE] Listener started")
 
     def pause_acceptance(self) -> None:
         """Stop accepting new audio (but keep listener running)."""
@@ -220,13 +220,13 @@ def wrap_text(text: str, width: int) -> list[str]:
 
 def play_audio_bytes(audio_bytes: bytes) -> None:
     try:
-        print(f"[TTS] Playing {len(audio_bytes)} bytes...")
+        #print(f"[TTS] Playing {len(audio_bytes)} bytes...")
         audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
-        print(f"[TTS] Duration: {len(audio_segment)}ms")
+        #print(f"[TTS] Duration: {len(audio_segment)}ms")
         play(audio_segment)
-        print("[TTS] ✓✓✓ PLAYBACK COMPLETE ✓✓✓")
+        #print("[TTS] ✓✓✓ PLAYBACK COMPLETE ✓✓✓")
     except Exception as exc:
-        print(f"[TTS] ✗ PLAYBACK ERROR: {exc}")
+        #print(f"[TTS] ✗ PLAYBACK ERROR: {exc}")
         import traceback
         traceback.print_exc()
 
@@ -282,9 +282,9 @@ def run_cycle(
     snowflake: SnowflakeLLM,
     synthesize_voice: bool,
 ) -> FrameAnalysisResponse:
-    print("\n" + "="*80)
-    print("[CYCLE] START")
-    print("="*80)
+    #print("\n" + "="*80)
+    #print("[CYCLE] START")
+    #print("="*80)
     
     # Vision processing
     request = FrameAnalysisRequest(
@@ -298,90 +298,88 @@ def run_cycle(
         synthesize_voice=False,
     )
     
-    print("[1/5] Vision pipeline...")
+    #print("[1/5] Vision pipeline...")
     response = pipeline.process(request)
-    print(f"[1/5] ✓ Found {len(response.objects)} objects")
+    #print(f"[1/5] ✓ Found {len(response.objects)} objects")
     
     # Log what we detected
     for obj in response.objects:
         depth_str = f"{obj.relative_depth_m:.1f}m" if obj.relative_depth_m else "n/a"
-        print(f"      - {obj.label} @ {obj.quadrant.value} ({depth_str})")
+        #print(f"      - {obj.label} @ {obj.quadrant.value} ({depth_str})")
 
     update: dict[str, Optional[str]] = {}
     
     # Transcribe user audio
-    print("[2/5] Transcribing...")
+    #print("[2/5] Transcribing...")
     try:
         user_transcript = assistant.transcribe_base64(audio_base64)
-        print(f"[2/5] ✓ '{user_transcript}'")
+        #print(f"[2/5] ✓ '{user_transcript}'")
     except Exception as exc:
-        print(f"[2/5] ✗ ERROR: {exc}")
+        #print(f"[2/5] ✗ ERROR: {exc}")
         user_transcript = None
     
     # Process if we got valid transcript
     if user_transcript and user_transcript.strip():
-        print(f"\n[USER]: {user_transcript}\n")
+        #print(f"\n[USER]: {user_transcript}\n")
         
         update["user_transcript"] = user_transcript
         assistant.append_history("User", user_transcript)
         
         # Build detailed vision summary
         detailed_vision = build_detailed_vision_summary(response)
-        print("[VISION CONTEXT]:")
-        print(detailed_vision)
-        print()
+        #print("[VISION CONTEXT]:")
+        #print(detailed_vision)
+        #print()
         
         # Build prompt
-        print("[3/5] Building prompt with vision data...")
+        #print("[3/5] Building prompt with vision data...")
         prompt = assistant.build_prompt(
             vision_summary=detailed_vision,
             user_text=user_transcript,
             instructions=prompt_instructions,
         )
-        print(f"[3/5] ✓ Prompt ready ({len(prompt)} chars)")
+        #print(f"[3/5] ✓ Prompt ready ({len(prompt)} chars)")
         
         # Get LLM response
-        print("[4/5] Calling Snowflake...")
+        #print("[4/5] Calling Snowflake...")
         try:
             llm_text = snowflake.complete(prompt)
-            print(f"[4/5] ✓ Got response ({len(llm_text)} chars)")
-            print(f"\n[ASSISTANT]: {llm_text}\n")
+            #print(f"[4/5] ✓ Got response ({len(llm_text)} chars)")
+            #print(f"\n[ASSISTANT]: {llm_text}\n")
             
             assistant.append_history("Assistant", llm_text)
             update["llm_response"] = llm_text
             
             # Synthesize and play
             if synthesize_voice and llm_text and llm_text.strip():
-                print("[5/5] Synthesizing speech...")
+                #print("[5/5] Synthesizing speech...")
                 try:
                     audio_bytes = assistant.synthesize(llm_text)
-                    print(f"[5/5] ✓ Got audio ({len(audio_bytes)} bytes)")
+                    #print(f"[5/5] ✓ Got audio ({len(audio_bytes)} bytes)")
                     update["audio_response_base64"] = base64.b64encode(audio_bytes).decode("utf-8")
                     
                     play_audio_bytes(audio_bytes)
                     
                 except Exception as exc:
-                    print(f"[5/5] ✗ TTS ERROR: {exc}")
+                    #print(f"[5/5] ✗ TTS ERROR: {exc}")
                     import traceback
                     traceback.print_exc()
             else:
                 if not synthesize_voice:
                     print("[5/5] ⚠ Voice disabled")
-                print("[5/5] Done (no TTS)")
+                #print("[5/5] Done (no TTS)")
                     
         except Exception as exc:
-            print(f"[4/5] ✗ LLM ERROR: {exc}")
+            #rint(f"[4/5] ✗ LLM ERROR: {exc}")
             import traceback
             traceback.print_exc()
-    else:
-        print("[2/5] ⚠ No transcript - skipping LLM")
     
     if update:
         response = response.model_copy(update=update)
     
-    print("="*80)
-    print("[CYCLE] COMPLETE")
-    print("="*80 + "\n")
+    #print("="*80)
+    #print("[CYCLE] COMPLETE")
+    #print("="*80 + "\n")
     return response
 
 
@@ -401,9 +399,9 @@ def main() -> None:
 
     from config import ELEVENLABS_API_KEY, SNOWFLAKE_USER, SNOWFLAKE_ACCOUNT, SNOWFLAKE_MODEL, SNOWFLAKE_PASSWORD
 
-    print("\n" + "="*80)
-    print("INITIALIZING SYSTEM")
-    print("="*80)
+    #print("\n" + "="*80)
+    #print("INITIALIZING SYSTEM")
+    #print("="*80)
     
     pipeline = VisionPipeline()
     assistant = get_assistant()
@@ -426,8 +424,8 @@ def main() -> None:
     listener = SpeechListener(recognizer, microphone, phrase_time_limit=args.listen_time)
     listener.start()
     
-    print(f"\nVOICE: {'ENABLED' if args.voice else 'DISABLED'}")
-    print(f"Say wake phrase to start\n")
+    #print(f"\nVOICE: {'ENABLED' if args.voice else 'DISABLED'}")
+    #print(f"Say wake phrase to start\n")
 
     environment = Environment(args.environment)
     cv2.namedWindow(WINDOW_VISION, cv2.WINDOW_NORMAL)
@@ -465,7 +463,7 @@ def main() -> None:
                 # Quick check for wake/goodbye
                 try:
                     transcript = assistant.transcribe_base64(speech_audio) or ""
-                    print(f"\n[HEARD]: '{transcript}'")
+                    #print(f"\n[HEARD]: '{transcript}'")
                 except Exception:
                     transcript = ""
 
@@ -475,16 +473,16 @@ def main() -> None:
                         conversation_active = True
                         last_user_activity = now
                         assistant.reset_history()
-                        print("\n*** CONVERSATION STARTED ***\n")
+                        #print("\n*** CONVERSATION STARTED ***\n")
                         status = "Active - listening"
                     else:
-                        print("(Not wake phrase)")
+                        #print("(Not wake phrase)")
                         listener.resume_acceptance()
                         speech_audio = None
 
                 # Goodbye detection
                 if conversation_active and transcript and assistant.should_end(transcript):
-                    print("\n*** CONVERSATION ENDED ***\n")
+                    #print("\n*** CONVERSATION ENDED ***\n")
                     conversation_active = False
                     assistant.reset_history()
                     status = "Waiting for wake phrase..."
@@ -515,13 +513,12 @@ def main() -> None:
                             last_user_activity = now
                             
                     except Exception as exc:
-                        print(f"ERROR in cycle: {exc}")
+                        #print(f"ERROR in cycle: {exc}")
                         import traceback
-                        traceback.print_exc()
                     finally:
                         status = "Active - listening"
                         listener.resume_acceptance()
-                        print("Ready for next input\n")
+                        #print("Ready for next input\n")
                     
             # Periodic vision refresh
             if now - last_run >= args.interval and metadata and not conversation_active:
@@ -541,7 +538,7 @@ def main() -> None:
 
             # Timeout
             if conversation_active and now - last_user_activity > INACTIVITY_TIMEOUT:
-                print(f"\nTimeout after {INACTIVITY_TIMEOUT}s\n")
+                #print(f"\nTimeout after {INACTIVITY_TIMEOUT}s\n")
                 conversation_active = False
                 assistant.reset_history()
                 status = "Waiting for wake phrase..."
