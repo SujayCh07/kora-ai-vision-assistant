@@ -74,7 +74,7 @@ export default function AppDock({ className = '', showMic = false, onMicPress })
   const currentPath = useMemo(() => pathname ?? '/camera', [pathname])
 
   return (
-    <div className={`pointer-events-auto flex flex-col items-center gap-5 ${className}`}>
+    <div className={`pointer-events-auto flex flex-col items-center gap-10 ${className}`}>
       {showMic && (
         <motion.button
           onClick={onMicPress}
@@ -95,7 +95,7 @@ export default function AppDock({ className = '', showMic = false, onMicPress })
         </motion.button>
       )}
 
-      <div className="flex w-[85vw] max-w-xl items-center justify-around rounded-3xl border border-white/15 bg-white/15 px-6 py-4 backdrop-blur-2xl">
+      <div className="flex w-[85vw] max-w-xl items-center justify-around rounded-2xl border border-white/15 bg-white/15 px-6 py-4 backdrop-blur-2xl">
         {navItems.map((item) => {
           const isActive = currentPath === item.path
           return (
@@ -103,7 +103,7 @@ export default function AppDock({ className = '', showMic = false, onMicPress })
               key={item.path}
               onClick={() => router.push(item.path)}
               whileTap={{ scale: 0.94 }}
-              className="flex h-12 w-12 items-center justify-center rounded-2xl"
+              className="flex h-10 w-16 items-center justify-center rounded-2xl"
               aria-label={item.label}
             >
               <motion.div

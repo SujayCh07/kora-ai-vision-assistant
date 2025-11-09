@@ -89,7 +89,7 @@ export default function CameraPage() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4, duration: 0.6 }}
-          className="text-sm uppercase tracking-[0.4em] text-white/60"
+          className="text-m uppercase tracking-[0.4em] text-white/60"
         >
           Tap to speak
         </motion.p>
@@ -97,7 +97,7 @@ export default function CameraPage() {
 
       <AppDock
         showMic
-        className="absolute bottom-8 left-1/2 -translate-x-1/2"
+        className="absolute bottom-10 left-1/2 -translate-x-1/2"
         onMicPress={() => {
           // Placeholder for microphone activation logic
         }}
