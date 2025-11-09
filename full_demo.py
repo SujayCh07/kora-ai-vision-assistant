@@ -34,7 +34,7 @@ WINDOW_YOLO = "YOLO Detections"
 WINDOW_DEPTH = "MiDaS Depth"
 
 INACTIVITY_TIMEOUT = 45.0  # seconds of silence before ending the convo
-PROXIMITY_THRESHOLD = 1.0  # meters - play alert if object is closer than this
+PROXIMITY_THRESHOLD = 0.11  # meters - play alert if object is closer than this
 
 
 class ProximityAlert:
