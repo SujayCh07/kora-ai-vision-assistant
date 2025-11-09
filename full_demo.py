@@ -369,23 +369,16 @@ def main() -> None:
     parser.add_argument("--listen-time", type=float, default=7.0, help="Max seconds per utterance")
     args = parser.parse_args()
 
-    settings = get_settings()
-    if not settings.elevenlabs_api_key:
-        raise RuntimeError("ELEVENLABS_API_KEY must be set for the full demo.")
-    if not (settings.snowflake_account and settings.snowflake_user and settings.snowflake_password):
-        raise RuntimeError("SNOWFLAKE_* credentials must be configured for the full demo.")
+    from config import ELEVENLABS_API_KEY, SNOWFLAKE_USER, SNOWFLAKE_ACCOUNT, SNOWFLAKE_MODEL, SNOWFLAKE_PASSWORD
 
     pipeline = VisionPipeline()
     assistant = get_assistant()
     snowflake = SnowflakeLLM(
-        account=settings.snowflake_account,
-        user=settings.snowflake_user,
-        password=settings.snowflake_password,
-        role=settings.snowflake_role,
-        warehouse=settings.snowflake_warehouse,
-        database=settings.snowflake_database,
-        schema=settings.snowflake_schema,
-        model=settings.snowflake_model,
+        account=SNOWFLAKE_ACCOUNT,
+        user=SNOWFLAKE_USER,
+        password=SNOWFLAKE_PASSWORD,
+        role="ACCOUNTADMIN",
+        model=SNOWFLAKE_MODEL,
     )
 
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)

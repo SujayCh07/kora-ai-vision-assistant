@@ -19,29 +19,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from config import get_settings  # noqa: E402  (import after adjusting sys.path)
-from .SnowFlakeLLMClient import SnowflakeLLMClient  # noqa: E402
+from config import ELEVENLABS_API_KEY  # noqa: E402  (import after adjusting sys.path)
+from SnowFlakeLLMClient import SnowflakeLLMClient
 
 MCP_PROMPT_PATH = PROJECT_ROOT / "mcp_prompt.txt"
 DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
 WAKE_PHRASES = ("hey kora", "hey cora", "hey korra", "hey kory", "hey core", "hey cor")
 GOODBYE_PHRASES = ("bye", "goodbye", "bye kora", "bye cora", "bye korra", "thank you kora", "bye cor")
-
+from config import ELEVENLABS_API_KEY
 
 class KoraAssistant:
     """Shared ElevenLabs + Snowflake helper with wake-word utilities."""
-
     def __init__(
         self,
         *,
         voice_id: str = DEFAULT_VOICE_ID,
         prompt_path: Path = MCP_PROMPT_PATH,
     ) -> None:
-        settings = get_settings()
-        api_key = settings.elevenlabs_api_key
-        if not api_key:
-            raise RuntimeError("ELEVENLABS_API_KEY must be configured.")
-
+        api_key = ELEVENLABS_API_KEY
         self.client = ElevenLabs(api_key=api_key)
         self.voice_id = voice_id
         self.recognizer = sr.Recognizer()
